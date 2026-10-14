@@ -28,7 +28,7 @@ variable "shared_rg_name" {
 
 variable "shared_acr_name" {
   type        = string
-  default     = "acrewasteplatform"
+  default     = "acrewastescale"
   description = "Name of the shared Azure Container Registry."
 }
 
@@ -110,7 +110,7 @@ variable "analytics_service_token" {
 
 variable "github_repository" {
   type        = string
-  default     = "nus-iss-dmss-practice-module-team5/team5-ewaste-platform"
+  default     = "nus-iss-dmss-practice-module-team5/team5-ewaste-scalable-systems"
   description = "Target GitHub repository in 'owner/repo' format for self-hosted runner registration."
 }
 

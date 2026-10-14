@@ -279,21 +279,26 @@ resource "azurerm_eventhub_namespace" "kafka" {
   tags                          = local.common_tags
 }
 
-# The 6 canonical topics defined as Event Hubs
+# Canonical topics defined as Event Hubs
+# Decision AD5: Lifecycle topics created with 3 partitions for multi-replica worker parallel consumption
+locals {
+  eventhub_topic_partitions = {
+    "ewaste.batch.events"                = 3
+    "ewaste.claim.events"                = 3
+    "batch.collector.assigned"           = 3
+    "batch.collection.completed"         = 3
+    "batch.collection.failed"            = 1
+    "ewaste.batch.events.matching.dlq.v1" = 1
+  }
+}
+
 resource "azurerm_eventhub" "topics" {
-  for_each = toset([
-    "ewaste.batch.events",
-    "ewaste.claim.events",
-    "batch.collector.assigned",
-    "batch.collection.completed",
-    "batch.collection.failed",
-    "ewaste.batch.events.matching.dlq.v1"
-  ])
+  for_each = local.eventhub_topic_partitions
 
   name                = each.key
   namespace_name      = azurerm_eventhub_namespace.kafka.name
   resource_group_name = azurerm_resource_group.env_rg.name
-  partition_count     = 1
+  partition_count     = each.value
   message_retention   = 1
 }
 
@@ -310,6 +315,22 @@ resource "azurerm_eventhub_consumer_group" "workflow_readers" {
   name                = "workflow-readers"
   namespace_name      = azurerm_eventhub_namespace.kafka.name
   eventhub_name       = azurerm_eventhub.topics["ewaste.batch.events"].name
+  resource_group_name = azurerm_resource_group.env_rg.name
+}
+
+# Dedicated consumer group for Python analytics-worker on 'ewaste.batch.events'
+resource "azurerm_eventhub_consumer_group" "analytics_worker_batch" {
+  name                = "analytics-worker"
+  namespace_name      = azurerm_eventhub_namespace.kafka.name
+  eventhub_name       = azurerm_eventhub.topics["ewaste.batch.events"].name
+  resource_group_name = azurerm_resource_group.env_rg.name
+}
+
+# Dedicated consumer group for Python analytics-worker on 'ewaste.claim.events'
+resource "azurerm_eventhub_consumer_group" "analytics_worker_claim" {
+  name                = "analytics-worker"
+  namespace_name      = azurerm_eventhub_namespace.kafka.name
+  eventhub_name       = azurerm_eventhub.topics["ewaste.claim.events"].name
   resource_group_name = azurerm_resource_group.env_rg.name
 }
 

@@ -18,6 +18,12 @@ provider "azurerm" {
   features {}
 }
 
+variable "acr_name" {
+  type        = string
+  default     = "acrewastescale"
+  description = "Globally unique name for the shared Azure Container Registry."
+}
+
 # Persistent shared resource group.
 resource "azurerm_resource_group" "shared" {
   name     = "rg-ewaste-shared"
@@ -36,7 +42,7 @@ resource "azurerm_resource_group" "shared" {
 # All image pushes from CI/CD runners and pulls from ACA runtime flow exclusively
 # through per-environment Private Endpoints over Azure Private Link.
 resource "azurerm_container_registry" "acr" {
-  name                          = "acrewasteplatform"
+  name                          = var.acr_name
   resource_group_name           = azurerm_resource_group.shared.name
   location                      = "japaneast"
   sku                           = "Premium"
