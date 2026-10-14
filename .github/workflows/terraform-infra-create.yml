@@ -165,7 +165,7 @@ jobs:
           TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
           TF_STATE_SA_ACCESS_KEY: ${{ secrets.TF_STATE_SA_ACCESS_KEY }}
           TERRAFORM_ACTION: ${{ inputs.action }}
-          TF_VAR_acr_name: ${{ secrets.AZURE_ACR_NAME || 'acrewastescale' }}
+          TF_VAR_acr_name: ${{ secrets.AZURE_ACR_NAME }}
         run: |
           cd terraform/shared
           terraform init \
@@ -238,7 +238,7 @@ jobs:
           fi
 
           TENANT_ID_VAL="${AZURE_TENANT_ID:-$ARM_TENANT_ID}"
-          ACR_NAME_VAL="${{ secrets.AZURE_ACR_NAME || 'acrewastescale' }}"
+          ACR_NAME_VAL="${{ secrets.AZURE_ACR_NAME }}"
 
           TF_VAR_ARGS=(
             -var-file="$TF_VARS_FILE"
@@ -370,7 +370,7 @@ jobs:
         run: |
           cd terraform/environments
 
-          ACR_NAME_VAL="${{ secrets.AZURE_ACR_NAME || 'acrewastescale' }}"
+          ACR_NAME_VAL="${{ secrets.AZURE_ACR_NAME }}"
           ACR_SERVER=$(terraform output -raw acr_login_server 2>/dev/null || echo "${ACR_NAME_VAL}.azurecr.io")
           MYSQL_FQDN=$(terraform output -raw mysql_fqdn 2>/dev/null || echo "mysql-ewaste-${TARGET_ENV}.mysql.database.azure.com")
           MYSQL_DB=$(terraform output -raw mysql_database_name 2>/dev/null || echo "ewastedb")
