@@ -48,9 +48,9 @@ auth:
 	t.Setenv("EWASTE_KAFKA_SASL_USERNAME", "$ConnectionString")
 	t.Setenv("KAFKA_CONNECTION_STRING", "Endpoint=sb://evh-ewaste-dev.servicebus.windows.net/;SharedAccessKeyName=auth-ewaste-workload;SharedAccessKey=redacted")
 	t.Setenv("EWASTE_STORAGE_TYPE", "azure")
-	t.Setenv("EWASTE_STORAGE_AZURE_ACCOUNT_NAME", "stgewastedev")
+	t.Setenv("EWASTE_STORAGE_AZURE_ACCOUNT_NAME", "stgewastescalabledev")
 	t.Setenv("EWASTE_STORAGE_AZURE_CONTAINER_NAME", "evidence-private")
-	t.Setenv("EWASTE_STORAGE_AZURE_ENDPOINT", "https://stgewastedev.blob.core.windows.net/")
+	t.Setenv("EWASTE_STORAGE_AZURE_ENDPOINT", "https://stgewastescalabledev.blob.core.windows.net/")
 
 	cfg, err := Load(configPath)
 	if err != nil {
@@ -86,7 +86,7 @@ auth:
 	if cfg.Kafka.SASLPassword == "" {
 		t.Fatal("expected Kafka connection string from KAFKA_CONNECTION_STRING")
 	}
-	if cfg.Storage.AdapterType != "azure" || cfg.Storage.AzureStorageAccount != "stgewastedev" || cfg.Storage.AzureStorageContainer != "evidence-private" || cfg.Storage.AzureStorageEndpoint != "https://stgewastedev.blob.core.windows.net/" {
+	if cfg.Storage.AdapterType != "azure" || cfg.Storage.AzureStorageAccount != "stgewastescalabledev" || cfg.Storage.AzureStorageContainer != "evidence-private" || cfg.Storage.AzureStorageEndpoint != "https://stgewastescalabledev.blob.core.windows.net/" {
 		t.Fatalf("expected storage environment values, got %+v", cfg.Storage)
 	}
 }
@@ -106,7 +106,7 @@ func TestApplyTestModeUsesLocalDependencies(t *testing.T) {
 
 func TestLoadStorageAdapterEnvironmentBindings(t *testing.T) {
 	t.Setenv("STORAGE_ADAPTER_TYPE", "azure_blob")
-	t.Setenv("AZURE_STORAGE_ACCOUNT", "stgewasteprod")
+	t.Setenv("AZURE_STORAGE_ACCOUNT", "stgewastescalableprod")
 	t.Setenv("AZURE_STORAGE_CONTAINER", "evidence-private")
 	t.Setenv("AZURE_USE_MANAGED_ID", "true")
 	t.Setenv("MAX_UPLOAD_SIZE_BYTES", "5242880")
@@ -119,13 +119,13 @@ func TestLoadStorageAdapterEnvironmentBindings(t *testing.T) {
 	if cfg.Storage.AdapterType != "azure_blob" {
 		t.Errorf("expected Storage.AdapterType 'azure_blob', got %q", cfg.Storage.AdapterType)
 	}
-	if cfg.Storage.AzureStorageAccount != "stgewasteprod" {
+	if cfg.Storage.AzureStorageAccount != "stgewastescalableprod" {
 		t.Errorf("expected Storage.AzureStorageAccount 'stgewasteprod', got %q", cfg.Storage.AzureStorageAccount)
 	}
 	if cfg.Storage.AzureStorageContainer != "evidence-private" {
 		t.Errorf("expected Storage.AzureStorageContainer 'evidence-private', got %q", cfg.Storage.AzureStorageContainer)
 	}
-	if cfg.Storage.AzureStorageEndpoint != "https://stgewasteprod.blob.core.windows.net/" {
+	if cfg.Storage.AzureStorageEndpoint != "https://stgewastescalableprod.blob.core.windows.net/" {
 		t.Errorf("expected auto-derived endpoint 'https://stgewasteprod.blob.core.windows.net/', got %q", cfg.Storage.AzureStorageEndpoint)
 	}
 	if !cfg.Storage.AzureUseManagedID {
@@ -150,9 +150,9 @@ func TestLoadReadsApprovedAnalyticsRuleVersionFromEnvironment(t *testing.T) {
 
 func TestLoadReadsEvidenceStorageEnvironmentContract(t *testing.T) {
 	t.Setenv("STORAGE_ADAPTER_TYPE", "azure_blob")
-	t.Setenv("AZURE_STORAGE_ACCOUNT", "stgewastedev")
+	t.Setenv("AZURE_STORAGE_ACCOUNT", "stgewastescalabledev")
 	t.Setenv("AZURE_STORAGE_CONTAINER", "evidence-private")
-	t.Setenv("AZURE_STORAGE_ENDPOINT", "https://stgewastedev.blob.core.windows.net/")
+	t.Setenv("AZURE_STORAGE_ENDPOINT", "https://stgewastescalabledev.blob.core.windows.net/")
 	t.Setenv("AZURE_USE_MANAGED_ID", "true")
 	t.Setenv("MAX_UPLOAD_SIZE_BYTES", "5242880")
 	t.Setenv("EWASTE_STORAGE_LOCAL_BASE_DIR", "data/test-evidence")
@@ -161,9 +161,9 @@ func TestLoadReadsEvidenceStorageEnvironmentContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load configuration: %v", err)
 	}
-	if cfg.Storage.AdapterType != "azure_blob" || cfg.Storage.AzureStorageAccount != "stgewastedev" ||
+	if cfg.Storage.AdapterType != "azure_blob" || cfg.Storage.AzureStorageAccount != "stgewastescalabledev" ||
 		cfg.Storage.AzureStorageContainer != "evidence-private" ||
-		cfg.Storage.AzureStorageEndpoint != "https://stgewastedev.blob.core.windows.net/" ||
+		cfg.Storage.AzureStorageEndpoint != "https://stgewastescalabledev.blob.core.windows.net/" ||
 		!cfg.Storage.AzureUseManagedID || cfg.Storage.MaxUploadSizeBytes != 5242880 ||
 		cfg.Storage.LocalBaseDir != "data/test-evidence" {
 		t.Fatalf("unexpected evidence storage configuration: %+v", cfg.Storage)

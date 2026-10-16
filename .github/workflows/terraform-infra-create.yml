@@ -304,7 +304,7 @@ jobs:
           # Idempotent import: adopt Storage Account and container that exist
           # in Azure but are missing from Terraform state.
           # ----------------------------------------------------------------
-          SA_NAME="stgewaste${TARGET_ENV}"
+          SA_NAME="stgewastescalable${TARGET_ENV}"
           SA_ADDR="azurerm_storage_account.evidence"
           if terraform state show "$SA_ADDR" &>/dev/null; then
             echo "[import] $SA_ADDR already in state — skipping."
@@ -404,8 +404,8 @@ jobs:
           ACA_API_FQDN=$(terraform output -raw aca_api_fqdn 2>/dev/null || echo "")
           ACA_UI_FQDN=$(terraform output -raw aca_ui_fqdn 2>/dev/null || echo "")
           ACA_ANALYTICS_FQDN=$(terraform output -raw aca_analytics_fqdn 2>/dev/null || echo "")
-          STORAGE_ACCOUNT_NAME=$(terraform output -raw storage_account_name 2>/dev/null || echo "stgewaste${TARGET_ENV}")
-          STORAGE_BLOB_ENDPOINT=$(terraform output -raw storage_blob_endpoint 2>/dev/null || echo "https://stgewaste${TARGET_ENV}.blob.core.windows.net/")
+          STORAGE_ACCOUNT_NAME=$(terraform output -raw storage_account_name 2>/dev/null || echo "stgewastescalable${TARGET_ENV}")
+          STORAGE_BLOB_ENDPOINT=$(terraform output -raw storage_blob_endpoint 2>/dev/null || echo "https://stgewastescalable${TARGET_ENV}.blob.core.windows.net/")
 
           if [ -n "$MYSQL_PASS" ]; then
             echo "::add-mask::$MYSQL_PASS"

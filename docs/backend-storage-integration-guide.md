@@ -29,7 +29,7 @@ The e-Waste platform evidence storage securely stores physical verification and 
                       |   +-----------------------------------------------+   |
                       |   | snet-private-endpoints (10.0.3.0/24)          |   |
                       |   | +-------------------------------------------+ |   |
-                      |   | | Private Endpoint: pe-stgewaste-dev        | |   |
+                      |   | | Private Endpoint: pe-stgewastescalable-dev        | |   |
                       |   | | IP: 10.0.3.7                              | |   |
                       |   | +-------------------------------------------+ |   |
                       |   +-----------------------+-----------------------+   |
@@ -37,7 +37,7 @@ The e-Waste platform evidence storage securely stores physical verification and 
                                                   | Private Link
                                                   v
                       +-------------------------------------------------------+
-                      | Azure Blob Storage: stgewastedev                      |
+                      | Azure Blob Storage: stgewastescalabledev                      |
                       | - Public Network Access: DISABLED (Zero-Trust)       |
                       | - Authentication: Secretless Azure AD (RBAC)         |
                       | - Container: evidence-private                         |
@@ -64,9 +64,9 @@ The IaC pipeline automatically provisions and injects the following configuratio
 | Variable Name             | Example Dev Value                             | Description                                                                               |
 | :------------------------ | :-------------------------------------------- | :---------------------------------------------------------------------------------------- |
 | `STORAGE_ADAPTER_TYPE`    | `azure_blob`                                  | Tells backend to instantiate the Azure Blob storage adapter (`local` for dev/unit tests). |
-| `AZURE_STORAGE_ACCOUNT`   | `stgewastedev`                                | The name of the target Azure Storage Account.                                             |
+| `AZURE_STORAGE_ACCOUNT`   | `stgewastescalabledev`                                | The name of the target Azure Storage Account.                                             |
 | `AZURE_STORAGE_CONTAINER` | `evidence-private`                            | The dedicated private blob container for verification evidence.                           |
-| `AZURE_STORAGE_ENDPOINT`  | `https://stgewastedev.blob.core.windows.net/` | Private endpoint URL. If omitted, derived automatically from `AZURE_STORAGE_ACCOUNT`.     |
+| `AZURE_STORAGE_ENDPOINT`  | `https://stgewastescalabledev.blob.core.windows.net/` | Private endpoint URL. If omitted, derived automatically from `AZURE_STORAGE_ACCOUNT`.     |
 | `AZURE_USE_MANAGED_ID`    | `true`                                        | Enables managed-identity authentication.                                                  |
 | `AZURE_CLIENT_ID`         | API user-assigned identity client ID          | Selects the identity used by Azure Go SDK `DefaultAzureCredential`.                       |
 | `MAX_UPLOAD_SIZE_BYTES`   | `5242880`                                     | Maximum upload size allowed per file (**5 MB**).                                          |

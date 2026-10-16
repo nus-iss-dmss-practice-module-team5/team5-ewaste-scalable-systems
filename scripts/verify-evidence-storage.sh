@@ -8,7 +8,7 @@ PHASE="${2:-public}"
 [[ "$TARGET_ENV" =~ ^(dev|stg|prod)$ ]] || { echo 'Invalid environment.' >&2; exit 1; }
 [[ "$PHASE" =~ ^(public|private)$ ]] || { echo 'Expected public or private phase.' >&2; exit 1; }
 RG="rg-ewaste-${TARGET_ENV}"
-ACCOUNT="stgewaste${TARGET_ENV}"
+ACCOUNT="stgewastescalable${TARGET_ENV}"
 CONTAINER="evidence-private"
 URL="https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}"
 TMP=$(mktemp -d)
@@ -40,7 +40,7 @@ if [[ "$PHASE" == public ]]; then
     | jq -e '(.properties.publicAccess // "None") == "None"' >/dev/null
   echo 'PASS: private account/container, shared keys disabled, versioning and seven-day soft delete.'
 
-  az network private-endpoint show --name "pe-stgewaste-${TARGET_ENV}" --resource-group "$RG" \
+  az network private-endpoint show --name "pe-stgewastescalable-${TARGET_ENV}" --resource-group "$RG" \
     | jq -e --arg id "$SA_ID" '.privateLinkServiceConnections | any(.privateLinkServiceConnectionState.status == "Approved" and .privateLinkServiceId == $id and (.groupIds | index("blob") != null))' >/dev/null
   VNET_ID=$(az network vnet show --name "vnet-ewaste-${TARGET_ENV}" --resource-group "$RG" --query id -o tsv)
   [[ -n "$VNET_ID" ]] || fail 'VNet ID is missing.'
