@@ -41,7 +41,7 @@ To try it locally:
 npm run build && npm start
 ```
 
-- **Chrome / Edge:** open http://localhost:3000, then go to DevTools > Application. *Manifest* shows the name, the icons and the install prompt. *Service workers* shows `/sw.js?v=<build>`. *Cache storage* shows the caches. Tick *Offline* under Network and reload `/home` to see the cached shell.
+- **Chrome / Edge:** open http://localhost:3000, then go to DevTools > Application. _Manifest_ shows the name, the icons and the install prompt. _Service workers_ shows `/sw.js?v=<build>`. _Cache storage_ shows the caches. Tick _Offline_ under Network and reload `/home` to see the cached shell.
 - **iOS Safari:** Share > **Add to Home Screen**. This needs HTTPS, so use a deployed environment. iOS reads the `apple-touch-icon` and `apple-mobile-web-app-*` tags set in `layout.tsx`.
 
 How it works:

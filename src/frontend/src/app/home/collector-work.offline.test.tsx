@@ -114,7 +114,9 @@ describe("collector work offline", () => {
     sessionValue = offlineMode();
     render(<CollectorWork />);
 
-    expect(await screen.findByTestId("collector-open-asg-1")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("collector-open-asg-1"),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("collector-saved-at")).toHaveTextContent(
       `Saved on this device ${new Date("2026-10-16T08:30:00.000Z").toLocaleString()}`,
     );
@@ -141,9 +143,9 @@ describe("collector work offline", () => {
   it("says when nothing is saved on this device", async () => {
     sessionValue = offlineMode();
     render(<CollectorWork />);
-    expect(await screen.findByTestId("collector-saved-empty")).toHaveTextContent(
-      "No assignments are saved on this device",
-    );
+    expect(
+      await screen.findByTestId("collector-saved-empty"),
+    ).toHaveTextContent("No assignments are saved on this device");
     expect(
       screen.queryByTestId("collector-assignments-empty"),
     ).not.toBeInTheDocument();
@@ -160,7 +162,10 @@ describe("collector work offline", () => {
     render(<CollectorWork />);
     await user.click(await screen.findByTestId("collector-open-asg-1"));
 
-    await user.type(screen.getByTestId("collector-rejection-reason"), "Too far");
+    await user.type(
+      screen.getByTestId("collector-rejection-reason"),
+      "Too far",
+    );
     await user.click(screen.getByTestId("collector-reject"));
     expect(
       await screen.findByTestId("collector-needs-connection"),
@@ -172,14 +177,21 @@ describe("collector work offline", () => {
       "DONOR_UNAVAILABLE",
     );
     await user.click(screen.getByTestId("collector-fail"));
-    expect(screen.getByTestId("collector-needs-connection")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("collector-needs-connection"),
+    ).toBeInTheDocument();
 
-    await user.type(screen.getByTestId("collector-pickup-at"), "2026-09-23T10:00");
+    await user.type(
+      screen.getByTestId("collector-pickup-at"),
+      "2026-09-23T10:00",
+    );
     await user.type(screen.getByTestId("collector-representative"), "Rep");
     await user.type(screen.getByTestId("collector-actual-count"), "4");
     await user.type(screen.getByTestId("collector-hash"), "a".repeat(64));
     await user.click(screen.getByTestId("collector-handoff-submit"));
-    expect(screen.getByTestId("collector-needs-connection")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("collector-needs-connection"),
+    ).toBeInTheDocument();
 
     expect(rejectAssignment).not.toHaveBeenCalled();
     expect(reportFailedPickup).not.toHaveBeenCalled();
@@ -193,7 +205,10 @@ describe("collector work offline", () => {
     sessionValue = { ...onlineSession(), isOffline: true };
     render(<CollectorWork />);
     await user.click(await screen.findByTestId("collector-open-asg-1"));
-    await user.type(screen.getByTestId("collector-rejection-reason"), "Too far");
+    await user.type(
+      screen.getByTestId("collector-rejection-reason"),
+      "Too far",
+    );
     await user.click(screen.getByTestId("collector-reject"));
     expect(
       await screen.findByTestId("collector-needs-connection"),
@@ -216,9 +231,7 @@ describe("collector work offline", () => {
 
     await waitFor(async () => {
       const saved = await loadAssignments(collector.id);
-      expect(
-        saved.map((row) => [row.assignmentId, row.batchVersion]),
-      ).toEqual([
+      expect(saved.map((row) => [row.assignmentId, row.batchVersion])).toEqual([
         ["asg-1", 9],
         ["asg-2", 3],
       ]);
@@ -231,7 +244,9 @@ describe("collector work offline", () => {
     vi.stubGlobal("indexedDB", undefined);
     sessionValue = onlineSession();
     render(<CollectorWork />);
-    expect(await screen.findByTestId("collector-open-asg-1")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("collector-open-asg-1"),
+    ).toBeInTheDocument();
     await waitFor(() => expect(warn).toHaveBeenCalled());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -251,7 +266,9 @@ describe("collector work offline", () => {
     // The device goes offline while the request is still out.
     sessionValue = { ...onlineSession(), isOffline: true };
     rerender(<CollectorWork />);
-    expect(await screen.findByTestId("collector-open-asg-1")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("collector-open-asg-1"),
+    ).toBeInTheDocument();
 
     failLoad({
       code: "NETWORK_ERROR",
@@ -277,7 +294,9 @@ describe("collector work offline", () => {
     // Sign-out clears the device while the list is still loading.
     await queueDeviceClear(async () => undefined);
     finishLoad(page([accepted]));
-    expect(await screen.findByTestId("collector-open-asg-1")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("collector-open-asg-1"),
+    ).toBeInTheDocument();
 
     await queueDeviceWrite(deviceWriteToken(), async () => undefined);
     expect(await loadAssignments(collector.id)).toEqual([]);

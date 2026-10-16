@@ -2,10 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  loadAssignments,
-  saveAssignments,
-} from "@/lib/offline/assignments";
+import { loadAssignments, saveAssignments } from "@/lib/offline/assignments";
 import {
   DRAFTS_STORE,
   closeOfflineDbForTests,
@@ -185,7 +182,9 @@ async function deviceWritesSettled() {
 }
 
 async function waitReady() {
-  await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+  await waitFor(() =>
+    expect(screen.getByTestId("ready")).toHaveTextContent("true"),
+  );
 }
 
 function countDrafts(): Promise<number> {

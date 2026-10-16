@@ -94,7 +94,10 @@ async function rememberUser(user: SessionUser): Promise<void> {
     }
     await setLastUser(user);
   } catch (error) {
-    console.warn("Could not remember the signed-in user on this device.", error);
+    console.warn(
+      "Could not remember the signed-in user on this device.",
+      error,
+    );
   }
 }
 
@@ -274,9 +277,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     lastUserVersion.current += 1;
     lastUserRef.current = null;
     const cleared = queueDeviceClear(() => forgetUser(userId));
-    if (
-      (await withTimeout(cleared, SIGN_OUT_CLEAR_TIMEOUT_MS)) === TIMED_OUT
-    ) {
+    if ((await withTimeout(cleared, SIGN_OUT_CLEAR_TIMEOUT_MS)) === TIMED_OUT) {
       console.warn("Signing out before saved data on this device was cleared.");
     }
     setJustRenewed(false);

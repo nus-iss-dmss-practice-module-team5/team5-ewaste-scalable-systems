@@ -13,8 +13,7 @@ import { ProcessingWork } from "./processing";
 import { Banner } from "./workflow-ui";
 
 export function HomeShell() {
-  const { session, justRenewed, logout, offlineUser, isOffline } =
-    useSession();
+  const { session, justRenewed, logout, offlineUser, isOffline } = useSession();
   const [activeNav, setActiveNav] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   // The batch an Auditor opened from the Impact list.
