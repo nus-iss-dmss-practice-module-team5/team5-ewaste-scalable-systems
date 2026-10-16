@@ -105,10 +105,13 @@ class AnalyticsPersistenceTests(unittest.TestCase):
                              WHERE assignment.id=%s""", (claimed["assignment_id"],))[0]
         collector = assigned["email"].split("@", 1)[0]
         self.assertIn(collector, self.tokens)
+        self.http("POST", "/api/v1/assignments/" + assigned["id"] + "/accept", collector, {},
+                  label + "-accept", claimed["version"])
+        handoff_version = self.sql("SELECT version FROM ewaste_batches WHERE id=%s", (batch,))[0]["version"]
         self.http("POST", "/api/v1/assignments/" + assigned["id"] + "/handoff", collector,
                             {"pickup_occurred_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
                              "donor_representative_name": "Synthetic Test", "actual_item_count": 5, "verification_hash": "a" * 64},
-                            label + "-handoff", claimed["version"])
+                            label + "-handoff", handoff_version)
         batch_version = self.sql("SELECT version FROM ewaste_batches WHERE id=%s", (batch,))[0]["version"]
         received = self.http("POST", path + "/receipt", "recycler1", receipt, label + "-receipt", batch_version)
         replay = self.http("POST", path + "/receipt", "recycler1", receipt, label + "-receipt", batch_version)
