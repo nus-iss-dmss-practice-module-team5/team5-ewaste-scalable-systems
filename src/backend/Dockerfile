@@ -5,7 +5,11 @@ WORKDIR /src
 ARG SERVICE=server
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN for attempt in 1 2 3; do \
+      go mod download && exit 0; \
+      if [ "$attempt" = 3 ]; then exit 1; fi; \
+      sleep "$attempt"; \
+    done
 
 COPY . .
 
