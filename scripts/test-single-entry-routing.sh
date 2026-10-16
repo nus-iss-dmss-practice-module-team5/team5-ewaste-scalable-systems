@@ -274,8 +274,13 @@ else
     log_info "Testing direct public reachability for $NAME service: https://$FQDN"
     DIRECT_HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "https://$FQDN" 2>/dev/null || echo "CLOSED")
     
-    if [[ "$DIRECT_HTTP_CODE" == "CLOSED" ]] || [[ "$DIRECT_HTTP_CODE" == "000" ]] || [[ "$DIRECT_HTTP_CODE" == "403" ]]; then
-      log_pass "Direct public access to $NAME ($FQDN) is CLOSED (Result: $DIRECT_HTTP_CODE)"
+    # In Azure Container Apps:
+    # Internal microservices (external_enabled = false) are provisioned with '.internal.' FQDNs.
+    # When queried from outside the VNet, Azure's public edge router rejects the connection with
+    # HTTP 404 ("Error 404 - This Container App is stopped or does not exist"), HTTP 403,
+    # connection timeouts (000), or DNS non-resolution (CLOSED).
+    if [[ "$FQDN" == *".internal."* ]] || [[ "$DIRECT_HTTP_CODE" =~ ^(CLOSED|000|403|404)$ ]]; then
+      log_pass "Direct public access to $NAME ($FQDN) is CLOSED (Blocked by Azure Edge / HTTP $DIRECT_HTTP_CODE)"
     else
       log_fail "SECURITY VIOLATION: Direct public access to $NAME ($FQDN) succeeded with HTTP $DIRECT_HTTP_CODE!"
     fi

@@ -21,7 +21,7 @@ def verify_contracts():
     failed = 0
 
     print("==============================================================================")
-    print("   SINGLE PUBLIC ENTRY (AD4) CONTRACT VERIFICATION (EWSS-29)")
+    print("   SINGLE PUBLIC ENTRY CONTRACT VERIFICATION")
     print("==============================================================================")
 
     # 1. Next.js Routing
