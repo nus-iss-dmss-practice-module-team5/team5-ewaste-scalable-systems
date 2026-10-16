@@ -20,7 +20,7 @@ provider "azurerm" {
 
 variable "acr_name" {
   type        = string
-  default     = "acrewastescale"
+  default     = "acrewastescalable"
   description = "Globally unique name for the shared Azure Container Registry."
 }
 
@@ -32,7 +32,7 @@ variable "location" {
 
 # Persistent shared resource group.
 resource "azurerm_resource_group" "shared" {
-  name     = "rg-ewaste-shared"
+  name     = "rg-ewastescalable-shared"
   location = var.location
 
   tags = {
@@ -65,7 +65,7 @@ resource "azurerm_container_registry" "acr" {
 
 # Centralized Log Analytics Workspace for Azure Monitor telemetry.
 resource "azurerm_log_analytics_workspace" "logs" {
-  name                = "log-ewaste-centralized"
+  name                = "log-ewastescalable-centralized"
   resource_group_name = azurerm_resource_group.shared.name
   location            = azurerm_resource_group.shared.location
   sku                 = "PerGB2018"

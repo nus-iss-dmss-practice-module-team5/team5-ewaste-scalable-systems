@@ -1,17 +1,17 @@
 # Operational Runbook: Rollback Strategy & Disaster Recovery Protocol
 
 **System:** Enterprise E-Waste Recycling & Chain-of-Custody Tracking Platform
-**Target Environments:** Azure Malaysia West (`rg-ewaste-dev`, `rg-ewaste-stg`, `rg-ewaste-prod`)
+**Target Environments:** Azure Malaysia West (`rg-ewastescalable-dev`, `rg-ewastescalable-stg`, `rg-ewastescalable-prod`)
 **Target SLA:** Mean Time to Recovery (MTTR) `< 2 minutes` | Zero Downtime | 100% Traffic Determinism
 **Document Version:** 1.0 (Production & Academic Baseline)
 
 ### Active Service Endpoints (Development Environment)
 
-- **Frontend Portal (UI):** `https://aca-ewaste-dev-ui.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
-- **Backend API Gateway:** `https://aca-ewaste-dev-api.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
+- **Frontend Portal (UI):** `https://aca-ewastescalable-dev-ui.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
+- **Backend API Gateway:** `https://aca-ewastescalable-dev-api.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
   - Health Endpoint: `/healthz`
   - Login Endpoint: `/api/v1/auth/login`
-- **Analytics & Matching Worker:** `https://aca-ewaste-dev-analytics.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
+- **Analytics & Matching Worker:** `https://aca-ewastescalable-dev-analytics.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
   - Readiness Endpoint: `/readyz`
 
 ---
@@ -112,7 +112,7 @@ When designing the progressive delivery architecture, our team evaluated two maj
                                             ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │ STAGE 1.1 - 1.3: CONTAINER APPS REVISION PROVISIONING                  │
-│ az containerapp update --name aca-ewaste-$ENV-$SVC --image <digest>   │
+│ az containerapp update --name aca-ewastescalable-$ENV-$SVC --image <digest>   │
 │  - Azure Container Apps boots new container replica                    │
 │  - Warm-up & healthcheck verification                                  │
 │  - Atomic 100% traffic shift to rolled-back revision                   │
@@ -214,7 +214,7 @@ If GitHub Actions is unavailable or inaccessible, the platform can be rolled bac
 ```bash
 # Set environment variables
 TARGET_ENV="dev"
-RG="rg-ewaste-${TARGET_ENV}"
+RG="rg-ewastescalable-${TARGET_ENV}"
 ACR_NAME="acrewasteplatform"
 
 # 1. Query the previous stable image tag for API
@@ -228,23 +228,23 @@ echo "Rolling back to tag: $PREV_API_TAG"
 
 # 2. Update Azure Container Apps revisions directly
 az containerapp update \
-  --name "aca-ewaste-${TARGET_ENV}-api" \
+  --name "aca-ewastescalable-${TARGET_ENV}-api" \
   --resource-group "$RG" \
   --image "${ACR_NAME}.azurecr.io/workflow-api:${PREV_API_TAG}"
 
 az containerapp update \
-  --name "aca-ewaste-${TARGET_ENV}-ui" \
+  --name "aca-ewastescalable-${TARGET_ENV}-ui" \
   --resource-group "$RG" \
   --image "${ACR_NAME}.azurecr.io/workflow-ui:${PREV_API_TAG}"
 
 az containerapp update \
-  --name "aca-ewaste-${TARGET_ENV}-analytics" \
+  --name "aca-ewastescalable-${TARGET_ENV}-analytics" \
   --resource-group "$RG" \
   --image "${ACR_NAME}.azurecr.io/workflow-analytics:${PREV_API_TAG}"
 
 # 3. Verify active revisions
 az containerapp revision list \
-  --name "aca-ewaste-${TARGET_ENV}-api" \
+  --name "aca-ewastescalable-${TARGET_ENV}-api" \
   --resource-group "$RG" \
   --query "[?properties.active].{Name:name, Created:properties.createdTime, Image:properties.template.containers[0].image}" \
   --output table
@@ -273,14 +273,14 @@ If a database schema change itself introduced a critical regression and must be 
    ```bash
    # Execute rollback of the last applied changeset using the Liquibase runner
    az vm run-command invoke \
-     --resource-group rg-ewaste-dev \
-     --name vm-runner-ewaste-dev \
+     --resource-group rg-ewastescalable-dev \
+     --name vm-runner-ewastescalable-dev \
      --command-id RunShellScript \
      --scripts 'docker run --rm \
        -v /home/azureuser/database:/liquibase/changelog \
        liquibase/liquibase \
        --changelog-file=changelog-master.yaml \
-       --url="jdbc:mysql://mysql-ewaste-dev.ewaste-dev.mysql.database.azure.com:3306/ewastedb?useSSL=true&requireSSL=true" \
+       --url="jdbc:mysql://mysql-ewastescalable-dev.ewaste-dev.mysql.database.azure.com:3306/ewastedb?useSSL=true&requireSSL=true" \
        --username="ewasteadmin" \
        --password="$DB_PASSWORD" \
        rollbackCount 1' \
@@ -296,9 +296,9 @@ Immediately following a rollback, execute the standard verification checklist ag
 ### 1. Ingress & Probe Verification
 
 ```bash
-API_FQDN="aca-ewaste-dev-api.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io"
-UI_FQDN="aca-ewaste-dev-ui.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io"
-WORKER_FQDN="aca-ewaste-dev-analytics.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io"
+API_FQDN="aca-ewastescalable-dev-api.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io"
+UI_FQDN="aca-ewastescalable-dev-ui.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io"
+WORKER_FQDN="aca-ewastescalable-dev-analytics.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io"
 
 # API Gateway check
 curl -s -o /dev/null -w "API Status: %{http_code}\n" "https://${API_FQDN}/healthz"
@@ -328,8 +328,8 @@ Ensure that containers are not crash-looping or generating 5xx errors:
 
 ```bash
 az containerapp logs show \
-  --name aca-ewaste-dev-api \
-  --resource-group rg-ewaste-dev \
+  --name aca-ewastescalable-dev-api \
+  --resource-group rg-ewastescalable-dev \
   --tail 30
 ```
 

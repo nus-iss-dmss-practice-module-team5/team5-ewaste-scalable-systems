@@ -218,7 +218,7 @@ resource "azurerm_mysql_flexible_server" "db" {
 }
 
 resource "azurerm_mysql_flexible_database" "ewastedb" {
-  name                = "ewastedb"
+  name                = "ewastescalabledb"
   resource_group_name = azurerm_resource_group.env_rg.name
   server_name         = azurerm_mysql_flexible_server.db.name
   charset             = "utf8mb4"
@@ -347,7 +347,7 @@ resource "azurerm_eventhub_consumer_group" "analytics_worker_claim" {
 
 # Shared authorization rule for application workloads (SASL/PLAIN connection string)
 resource "azurerm_eventhub_namespace_authorization_rule" "app_auth" {
-  name                = "auth-ewaste-workload"
+  name                = "auth-ewastescalable-workload"
   namespace_name      = azurerm_eventhub_namespace.kafka.name
   resource_group_name = azurerm_resource_group.env_rg.name
 

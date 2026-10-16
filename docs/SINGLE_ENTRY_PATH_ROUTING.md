@@ -8,21 +8,21 @@ Per **Decision AD4** recorded in the _Architecting Scalable Systems Delivery Pla
 
 > **AD4 Single Entry:** One public address routes UI and API paths to the owning service, using Container Apps ingress routing or a small gateway container. Direct public access to internal microservices is closed.
 
-In our decoupled microservices architecture, six distinct microservices and workers operate inside the Azure Container Apps Environment (`cae-ewaste-prod`) connected to the internal Virtual Network (`vnet-ewaste-prod`):
+In our decoupled microservices architecture, six distinct microservices and workers operate inside the Azure Container Apps Environment (`cae-ewastescalable-prod`) connected to the internal Virtual Network (`vnet-ewastescalable-prod`):
 
-1. **Frontend UI & Reverse Proxy Gateway:** `aca-ewaste-prod-ui` (Next.js 16 / React 19)
-2. **Identity & Access Service:** `aca-ewaste-prod-auth` (Go 1.23 API)
-3. **Batch Workflow Service:** `aca-ewaste-prod-api` (Go 1.23 API)
-4. **Claim Logistics Service:** `aca-ewaste-prod-claim` (Go 1.23 API)
-5. **Custody & Verification Service:** `aca-ewaste-prod-custody` (Go 1.23 API)
-6. **Matching Worker Service:** `aca-ewaste-prod-matching-worker` (Python 3.12 Headless Worker)
-7. **Analytics Worker Service:** `aca-ewaste-prod-analytics` (Python 3.12 Worker)
+1. **Frontend UI & Reverse Proxy Gateway:** `aca-ewastescalable-prod-ui` (Next.js 16 / React 19)
+2. **Identity & Access Service:** `aca-ewastescalable-prod-auth` (Go 1.23 API)
+3. **Batch Workflow Service:** `aca-ewastescalable-prod-api` (Go 1.23 API)
+4. **Claim Logistics Service:** `aca-ewastescalable-prod-claim` (Go 1.23 API)
+5. **Custody & Verification Service:** `aca-ewastescalable-prod-custody` (Go 1.23 API)
+6. **Matching Worker Service:** `aca-ewastescalable-prod-matching-worker` (Python 3.12 Headless Worker)
+7. **Analytics Worker Service:** `aca-ewastescalable-prod-analytics` (Python 3.12 Worker)
 
 ### Security Boundary & Attack Surface Reduction
 
 Direct exposure of internal microservices exposes individual REST endpoints, port allocations, and service-to-service interfaces to the public internet. By establishing the **Frontend UI Application as the Single Public Ingress Gateway**:
 
-- **Single Public Entry:** Only `aca-ewaste-prod-ui` enables external ingress (`external_enabled = true`) on HTTPS port 3000.
+- **Single Public Entry:** Only `aca-ewastescalable-prod-ui` enables external ingress (`external_enabled = true`) on HTTPS port 3000.
 - **Zero Direct Access:** All backend Go APIs and Python workers have `external_enabled = false` (or headless). They possess no public IP addresses or public DNS records, communicating exclusively via internal Azure Container Apps DNS (`<app-name>.<internal-dns>`) within the delegated ACA subnet (`10.0.3.0/23`).
 
 ---
@@ -138,6 +138,6 @@ python scripts/verify_single_entry.py
 
 An automated bash test runner capable of executing against live Azure Container Apps environments:
 
-1. **Stage 1 (Public Gateway Health):** Confirms public HTTPS connectivity to `https://aca-ewaste-prod-ui...` (returns HTTP 200).
+1. **Stage 1 (Public Gateway Health):** Confirms public HTTPS connectivity to `https://aca-ewastescalable-prod-ui...` (returns HTTP 200).
 2. **Stage 2 (Path-Based Route Traversal):** Sends test requests through the single public entrypoint for all 4 microservice domains (`/api/v1/auth/login`, `/api/v1/batches`, `/api/v1/assignments`, `/api/v1/processing/batches`) and asserts that backend services respond.
 3. **Stage 3 (Closed Direct Access Assertion):** Attempts direct public HTTPS connections to internal microservice FQDNs and verifies that direct public access is blocked (`000` / connection refused / DNS non-resolution).

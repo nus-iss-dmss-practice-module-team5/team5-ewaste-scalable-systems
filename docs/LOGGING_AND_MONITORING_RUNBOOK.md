@@ -10,18 +10,18 @@ This document is the **authoritative operational reference guide** for querying,
 
 All Container Apps write JSON logs to `stdout`/`stderr`, which are ingested into the shared **Azure Log Analytics Workspace**:
 
-| Resource                    | Value in Dev (`dev`)       | Value in Staging (`stg`)   | Value in Production (`prod`) |
-| :-------------------------- | :------------------------- | :------------------------- | :--------------------------- |
-| **Resource Group**          | `rg-ewaste-dev`            | `rg-ewaste-stg`            | `rg-ewaste-prod`             |
-| **Log Analytics Workspace** | `log-ewaste-centralized`   | `log-ewaste-centralized`   | `log-ewaste-centralized`     |
-| **API Container App**       | `aca-ewaste-dev-api`       | `aca-ewaste-stg-api`       | `aca-ewaste-prod-api`        |
-| **Analytics Worker App**    | `aca-ewaste-dev-analytics` | `aca-ewaste-stg-analytics` | `aca-ewaste-prod-analytics`  |
-| **Frontend UI App**         | `aca-ewaste-dev-ui`        | `aca-ewaste-stg-ui`        | `aca-ewaste-prod-ui`         |
+| Resource                    | Value in Dev (`dev`)               | Value in Staging (`stg`)           | Value in Production (`prod`)        |
+| :-------------------------- | :--------------------------------- | :--------------------------------- | :---------------------------------- |
+| **Resource Group**          | `rg-ewastescalable-dev`            | `rg-ewastescalable-stg`            | `rg-ewastescalable-prod`            |
+| **Log Analytics Workspace** | `log-ewastescalable-centralized`   | `log-ewastescalable-centralized`   | `log-ewastescalable-centralized`    |
+| **API Container App**       | `aca-ewastescalable-dev-api`       | `aca-ewastescalable-stg-api`       | `aca-ewastescalable-prod-api`       |
+| **Analytics Worker App**    | `aca-ewastescalable-dev-analytics` | `aca-ewastescalable-stg-analytics` | `aca-ewastescalable-prod-analytics` |
+| **Frontend UI App**         | `aca-ewastescalable-dev-ui`        | `aca-ewastescalable-stg-ui`        | `aca-ewastescalable-prod-ui`        |
 
 ### 1.1 Access via Azure Portal
 
 1. Open the [Azure Portal](https://portal.azure.com).
-2. Navigate to **Log Analytics Workspaces** $\rightarrow$ select **`log-ewaste-centralized`**.
+2. Navigate to **Log Analytics Workspaces** $\rightarrow$ select **`log-ewastescalable-centralized`**.
 3. Click **Logs** in the left navigation sidebar.
 4. Copy and paste any of the KQL queries from [Section 4](#4-reusable-kql-query-library).
 
@@ -32,15 +32,15 @@ To stream console logs in real time from your terminal:
 ```bash
 # Stream Go API logs
 az containerapp logs show \
-  --name aca-ewaste-dev-api \
-  --resource-group rg-ewaste-dev \
+  --name aca-ewastescalable-dev-api \
+  --resource-group rg-ewastescalable-dev \
   --follow \
   --format text
 
 # Stream Python Analytics Worker logs
 az containerapp logs show \
-  --name aca-ewaste-dev-analytics \
-  --resource-group rg-ewaste-dev \
+  --name aca-ewastescalable-dev-analytics \
+  --resource-group rg-ewastescalable-dev \
   --follow \
   --format text
 ```
@@ -54,12 +54,12 @@ Container Apps logs are segregated into two primary Log Analytics tables:
 ```mermaid
 flowchart TD
     subgraph Workloads ["Container Workloads"]
-        API["aca-ewaste-*-api\n(Go Gin Engine)"]
-        WORKER["aca-ewaste-*-analytics\n(Python Consumer)"]
-        UI["aca-ewaste-*-ui\n(Next.js Web Client)"]
+        API["aca-ewastescalable-*-api\n(Go Gin Engine)"]
+        WORKER["aca-ewastescalable-*-analytics\n(Python Consumer)"]
+        UI["aca-ewastescalable-*-ui\n(Next.js Web Client)"]
     end
 
-    subgraph LogAnalytics ["Azure Log Analytics (log-ewaste-centralized)"]
+    subgraph LogAnalytics ["Azure Log Analytics (log-ewastescalable-centralized)"]
         CONSOLE["ContainerAppConsoleLogs_CL\n(Application stdout / stderr JSON)"]
         SYSTEM["ContainerAppSystemLogs_CL\n(Container lifecycle, probes, restarts)"]
     end
@@ -379,9 +379,9 @@ If Azure Container Apps is not routing traffic to a container:
 
 ## 6. Audit & Traceability Appendix
 
-| Component                    | Telemetry Standard                                                 | Redaction Guarantee                                    |   Status   |
-| :--------------------------- | :----------------------------------------------------------------- | :----------------------------------------------------- | :--------: |
-| **`workflow-api`**           | Standardized JSON with `component`, `correlation_id`, `latency_ms` | Passwords, bearer tokens, and binary files excluded    | **ACTIVE** |
-| **`matcher-worker`**         | Structured `observe()` emission with latency and failure streaks   | Unparsed bodies, tokens, snapshots excluded            | **ACTIVE** |
-| **`log-ewaste-centralized`** | Reusable KQL suite across 6 operational categories                 | 30-day retention; accessible via Portal and Azure CLI  | **ACTIVE** |
-| **Probe Signals**            | Sub-second `/healthz` and `/readyz` endpoints wired to ACA         | Prevents traffic routing to paused/unhealthy instances | **ACTIVE** |
+| Component                            | Telemetry Standard                                                 | Redaction Guarantee                                    |   Status   |
+| :----------------------------------- | :----------------------------------------------------------------- | :----------------------------------------------------- | :--------: |
+| **`workflow-api`**                   | Standardized JSON with `component`, `correlation_id`, `latency_ms` | Passwords, bearer tokens, and binary files excluded    | **ACTIVE** |
+| **`matcher-worker`**                 | Structured `observe()` emission with latency and failure streaks   | Unparsed bodies, tokens, snapshots excluded            | **ACTIVE** |
+| **`log-ewastescalable-centralized`** | Reusable KQL suite across 6 operational categories                 | 30-day retention; accessible via Portal and Azure CLI  | **ACTIVE** |
+| **Probe Signals**                    | Sub-second `/healthz` and `/readyz` endpoints wired to ACA         | Prevents traffic routing to paused/unhealthy instances | **ACTIVE** |

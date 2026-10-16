@@ -10,10 +10,10 @@ set -Eeuo pipefail
 : "${ANALYTICS_SERVICE_TOKEN:?configure the dedicated analytics service token for this environment}"
 [[ ${#ANALYTICS_SERVICE_TOKEN} -ge 32 ]] || { echo 'Analytics service token must contain at least 32 characters.' >&2; exit 2; }
 [[ "$ANALYTICS_SERVICE_TOKEN" != "$MATCHER_SIGNING_SECRET" ]] || { echo 'Use separate analytics bearer and matcher signing secrets.' >&2; exit 2; }
-RG="${RG:-rg-ewaste-${TARGET_ENV}}"
-NAMESPACE="evh-ewaste-${TARGET_ENV}"
-API="aca-ewaste-${TARGET_ENV}-api"
-APP="aca-ewaste-${TARGET_ENV}-analytics"
+RG="${RG:-rg-ewastescalable-${TARGET_ENV}}"
+NAMESPACE="evh-ewastescalable-${TARGET_ENV}"
+API="aca-ewastescalable-${TARGET_ENV}-api"
+APP="aca-ewastescalable-${TARGET_ENV}-analytics"
 ISSUER="ewaste-matching-${TARGET_ENV}"
 AUDIENCE="ewaste-matching-api-${TARGET_ENV}"
 
@@ -21,7 +21,7 @@ AUDIENCE="ewaste-matching-api-${TARGET_ENV}"
 # do not select the first namespace or silently continue with empty credentials.
 ready=false
 for attempt in {1..60}; do
-  if az eventhubs namespace authorization-rule show --resource-group "$RG" --namespace-name "$NAMESPACE" --name auth-ewaste-workload --output none 2>/dev/null; then
+  if az eventhubs namespace authorization-rule show --resource-group "$RG" --namespace-name "$NAMESPACE" --name auth-ewastescalable-workload --output none 2>/dev/null; then
     ready=true
     for topic in ewaste.batch.events ewaste.claim.events batch.collector.assigned batch.collection.completed batch.collection.failed ewaste.batch.events.matching.dlq.v1; do
       if ! az eventhubs eventhub show --resource-group "$RG" --namespace-name "$NAMESPACE" --name "$topic" --output none 2>/dev/null; then ready=false; break; fi
@@ -31,7 +31,7 @@ for attempt in {1..60}; do
   sleep 10
 done
 [[ "$ready" == true ]] || { echo "Event Hubs prerequisites are missing; finish the IaC workflow first." >&2; exit 1; }
-CONNECTION=$(az eventhubs namespace authorization-rule keys list --resource-group "$RG" --namespace-name "$NAMESPACE" --name auth-ewaste-workload --query primaryConnectionString -o tsv)
+CONNECTION=$(az eventhubs namespace authorization-rule keys list --resource-group "$RG" --namespace-name "$NAMESPACE" --name auth-ewastescalable-workload --query primaryConnectionString -o tsv)
 [[ -n "$CONNECTION" ]] || { echo 'Event Hubs connection string is empty.' >&2; exit 1; }
 if [[ -n "${GITHUB_ACTIONS:-}" ]]; then printf '::add-mask::%s\n' "$CONNECTION"; fi
 API_FQDN=$(az containerapp show --name "$API" --resource-group "$RG" --query properties.configuration.ingress.fqdn -o tsv)

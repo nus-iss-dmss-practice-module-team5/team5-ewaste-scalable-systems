@@ -1,7 +1,7 @@
 # Operational Runbook: CI/CD Pipeline & End-to-End Application Testing
 
 **Platform:** Enterprise E-Waste Recycling & Chain-of-Custody Tracking System
-**Environment:** Azure Malaysia West (`rg-ewaste-dev`)
+**Environment:** Azure Malaysia West (`rg-ewastescalable-dev`)
 **Architecture:** Zero-Trust Private VNet Delegation, Microservices on Azure Container Apps (ACA), Private MySQL Flexible Server, Kafka/Redis Outbox Messaging.
 
 ---
@@ -29,23 +29,23 @@
 
 ## 1. Architecture & Environment Topology
 
-### Network Layout (`vnet-ewaste-dev` - `10.0.0.0/16`)
+### Network Layout (`vnet-ewastescalable-dev` - `10.0.0.0/16`)
 
-| Subnet Name              | Address Range | Purpose & Access Model                                                                                                    |
-| :----------------------- | :------------ | :------------------------------------------------------------------------------------------------------------------------ |
-| `snet-aca`               | `10.0.8.0/21` | Delegated to Azure Container Apps environment (`cae-ewaste-dev`).                                                         |
-| `snet-mysql`             | `10.0.2.0/24` | **100% Private Delegation** to `Microsoft.DBforMySQL/flexibleServers`. Zero public IP.                                    |
-| `snet-redis`             | `10.0.1.0/24` | Private Endpoint for Redis Cache.                                                                                         |
-| `snet-private-endpoints` | `10.0.3.0/24` | Private Endpoints for Key Vault and Shared ACR.                                                                           |
-| `snet-runner`            | `10.0.4.0/24` | Self-hosted GitHub Actions VM runner (`vm-runner-ewaste-dev`). Inbound strictly restricted to long-poll egress to GitHub. |
+| Subnet Name              | Address Range | Purpose & Access Model                                                                                                            |
+| :----------------------- | :------------ | :-------------------------------------------------------------------------------------------------------------------------------- |
+| `snet-aca`               | `10.0.8.0/21` | Delegated to Azure Container Apps environment (`cae-ewastescalable-dev`).                                                         |
+| `snet-mysql`             | `10.0.2.0/24` | **100% Private Delegation** to `Microsoft.DBforMySQL/flexibleServers`. Zero public IP.                                            |
+| `snet-redis`             | `10.0.1.0/24` | Private Endpoint for Redis Cache.                                                                                                 |
+| `snet-private-endpoints` | `10.0.3.0/24` | Private Endpoints for Key Vault and Shared ACR.                                                                                   |
+| `snet-runner`            | `10.0.4.0/24` | Self-hosted GitHub Actions VM runner (`vm-runner-ewastescalable-dev`). Inbound strictly restricted to long-poll egress to GitHub. |
 
 ### Active Service Endpoints
 
-- **Frontend UI:** `https://aca-ewaste-dev-ui.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
-- **Backend API Gateway:** `https://aca-ewaste-dev-api.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
+- **Frontend UI:** `https://aca-ewastescalable-dev-ui.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
+- **Backend API Gateway:** `https://aca-ewastescalable-dev-api.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
   - Health Endpoint: `/healthz`
   - Internal RPC: `/internal/v1/*` (Protected by workload bearer token)
-- **Analytics Worker:** `https://aca-ewaste-dev-analytics.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
+- **Analytics Worker:** `https://aca-ewastescalable-dev-analytics.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
   - Readiness Endpoint: `/readyz`
 
 ---
@@ -165,7 +165,7 @@ All mock accounts share the unified test password:
 
 ### Phase 1: Donor Submits Batch
 
-1. Open the UI: `https://aca-ewaste-dev-ui.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
+1. Open the UI: `https://aca-ewastescalable-dev-ui.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
 2. Log in as **`donor1@ewaste.test`** / `TestPassword123!`.
 3. Click **\"New Batch\"** and fill in valid parameters:
    - **Category:** `ICT_EQUIPMENT`
@@ -184,7 +184,7 @@ All mock accounts share the unified test password:
 
 ### Phase 2: Event-Driven Matching Engine Processing
 
-1. The analytics container (`aca-ewaste-dev-analytics`) polls the Kafka topic.
+1. The analytics container (`aca-ewastescalable-dev-analytics`) polls the Kafka topic.
 2. The worker extracts the batch event and queries `POST /internal/v1/matching/runs`.
 3. The matching engine evaluates the 5 business rules:
    - `M1` (Category Capability): `PROC-001` supports `ICT_EQUIPMENT`.
@@ -261,10 +261,10 @@ Because MySQL Flexible Server has zero public IP, execute ad-hoc SQL checks via 
 
 ```bash
 az vm run-command invoke \
-  --resource-group rg-ewaste-dev \
-  --name vm-runner-ewaste-dev \
+  --resource-group rg-ewastescalable-dev \
+  --name vm-runner-ewastescalable-dev \
   --command-id RunShellScript \
-  --scripts "docker run --rm mysql:8.0 mysql -h mysql-ewaste-dev.ewaste-dev.mysql.database.azure.com -u ewasteadmin -p'7vR9qL2wT8xN4bK1pM5yZ3jD' ewastedb -e 'SELECT id, status, category, estimated_weight_kg FROM ewaste_batches ORDER BY created_at DESC LIMIT 5;'" \
+  --scripts "docker run --rm mysql:8.0 mysql -h mysql-ewastescalable-dev.ewaste-dev.mysql.database.azure.com -u ewasteadmin -p'7vR9qL2wT8xN4bK1pM5yZ3jD' ewastedb -e 'SELECT id, status, category, estimated_weight_kg FROM ewaste_batches ORDER BY created_at DESC LIMIT 5;'" \
   --query "value[0].message" -o tsv
 ```
 
@@ -275,15 +275,15 @@ To monitor backend and analytics logs during live demonstrations:
 ```bash
 # Backend API Request & Error Logs
 az containerapp logs show \
-  --name aca-ewaste-dev-api \
-  --resource-group rg-ewaste-dev \
+  --name aca-ewastescalable-dev-api \
+  --resource-group rg-ewastescalable-dev \
   --tail 50 \
   --follow
 
 # Matcher Analytics Worker Event Processing Logs
 az containerapp logs show \
-  --name aca-ewaste-dev-analytics \
-  --resource-group rg-ewaste-dev \
+  --name aca-ewastescalable-dev-analytics \
+  --resource-group rg-ewastescalable-dev \
   --tail 50 \
   --follow
 ```
