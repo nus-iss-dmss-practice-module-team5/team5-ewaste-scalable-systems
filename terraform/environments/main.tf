@@ -1557,6 +1557,26 @@ resource "azurerm_container_app" "ui" {
       }
 
       env {
+        name  = "IDENTITY_ACCESS_URL"
+        value = "https://${azurerm_container_app.auth.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "BATCH_WORKFLOW_URL"
+        value = "https://${azurerm_container_app.api.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "CLAIM_LOGISTICS_URL"
+        value = "https://${azurerm_container_app.claim.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "CUSTODY_VERIFICATION_URL"
+        value = "https://${azurerm_container_app.custody.ingress[0].fqdn}"
+      }
+
+      env {
         name  = "NEXT_PUBLIC_USE_MOCK_AUTH"
         value = "false"
       }
@@ -2006,7 +2026,7 @@ resource "azurerm_container_app" "analytics" {
   }
 
   ingress {
-    external_enabled = var.environment == "dev" ? true : false
+    external_enabled = false
     target_port      = 8000
     transport        = "auto"
 
