@@ -39,6 +39,19 @@ on:
         required: false
         type: string
         default: ""
+    # Passed explicitly by the caller (no `secrets: inherit`). The deploy job
+    # also sees environment-scoped secrets, which take precedence.
+    secrets:
+      AZURE_ACR_NAME:
+        required: false
+      AZURE_CREDENTIALS:
+        required: false
+      MATCHER_SIGNING_SECRET:
+        required: false
+      EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN:
+        required: false
+      ANALYTICS_SERVICE_TOKEN:
+        required: false
     outputs:
       digest:
         description: "Deployed image digest"

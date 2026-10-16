@@ -369,7 +369,12 @@ jobs:
       image_tag: ${{ needs.plan-services.outputs.image_tag }}
       rollback_tag: ${{ inputs.rollback_tag }}
       ui_build_args: ${{ needs.plan-services.outputs.ui_build_args }}
-    secrets: inherit
+    secrets:
+      AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
+      EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN }}
+      ANALYTICS_SERVICE_TOKEN: ${{ secrets.ANALYTICS_SERVICE_TOKEN }}
 
   # ============================================================================
   # STAGE 3: DYNAMIC APPLICATION SECURITY TESTING (OWASP ZAP)
