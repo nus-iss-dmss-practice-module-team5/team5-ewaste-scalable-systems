@@ -131,7 +131,7 @@ if [[ -z "$ENTRY_URL" ]] && [[ -d "terraform/environments" ]] && command -v terr
     ENTRY_URL="$TF_ENTRY"
     log_info "Discovered public entrypoint: $ENTRY_URL"
   fi
-  
+
   if [[ -z "$AUTH_FQDN" ]]; then
     AUTH_FQDN=$(terraform -chdir=terraform/environments output -raw aca_auth_fqdn 2>/dev/null || true)
   fi
@@ -172,7 +172,7 @@ if [[ "$DRY_RUN" == "1" ]] || [[ -z "$ENTRY_URL" ]]; then
   else
     log_info "Dry run specified. Executing route configuration contract test."
   fi
-  
+
   PYTHON_BIN="python3"
   if ! command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="python"
@@ -266,14 +266,14 @@ else
   for item in "${INTERNAL_FQDNS[@]}"; do
     NAME="${item%%:*}"
     FQDN="${item##*:}"
-    
+
     FQDN="${FQDN#https://}"
     FQDN="${FQDN#http://}"
     FQDN="${FQDN%%/*}"
 
     log_info "Testing direct public reachability for $NAME service: https://$FQDN"
     DIRECT_HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "https://$FQDN" 2>/dev/null || echo "CLOSED")
-    
+
     # In Azure Container Apps:
     # Internal microservices (external_enabled = false) are provisioned with '.internal.' FQDNs.
     # When queried from outside the VNet, Azure's public edge router rejects the connection with
