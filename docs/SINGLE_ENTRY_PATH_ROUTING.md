@@ -31,33 +31,7 @@ Direct exposure of internal microservices exposes individual REST endpoints, por
 
 The Next.js reverse proxy engine (`src/frontend/next.config.ts`) inspects incoming path prefixes and proxies traffic directly to the owning microservice container over internal ACA DNS:
 
-```mermaid
-flowchart TD
-    Client["Public Client Browser"]
-    Gateway["Single Public Entrypoint<br/><b>aca-ewaste-prod-ui</b><br/>(Port 3000 | external_enabled = true)"]
-
-    subgraph Internal_VNet["Azure Container Apps Internal Network (external_enabled = false)"]
-        Auth["Identity & Access<br/><b>aca-ewaste-prod-auth</b><br/>Port 8080"]
-        Workflow["Batch Workflow<br/><b>aca-ewaste-prod-api</b><br/>Port 8080"]
-        Claim["Claim Logistics<br/><b>aca-ewaste-prod-claim</b><br/>Port 8080"]
-        Custody["Custody & Verification<br/><b>aca-ewaste-prod-custody</b><br/>Port 8080"]
-        Matching["Matching Worker<br/><b>aca-ewaste-prod-matching-worker</b><br/>Headless"]
-        Analytics["Analytics Worker<br/><b>aca-ewaste-prod-analytics</b><br/>Headless/Internal"]
-    end
-
-    Client -->|HTTPS /api/v1/*| Gateway
-    Gateway -->|/api/v1/auth/*| Auth
-    Gateway -->|/api/v1/batches/*| Workflow
-    Gateway -->|/api/v1/opportunities/*| Workflow
-    Gateway -->|/api/v1/batches/:id/claim| Claim
-    Gateway -->|/api/v1/assignments/*| Claim
-    Gateway -->|/api/v1/assignments/:id/handoff| Custody
-    Gateway -->|/api/v1/batches/:id/receipt| Custody
-    Gateway -->|/api/v1/batches/:id/treatment| Custody
-    Gateway -->|/api/v1/batches/:id/evidence/*| Custody
-    Gateway -->|/api/v1/processing/*| Custody
-    Gateway -->|/api/v1/audit/*| Custody
-```
+![img.png](single_path_routing.png)
 
 ### Route Prefix Mapping Table
 
