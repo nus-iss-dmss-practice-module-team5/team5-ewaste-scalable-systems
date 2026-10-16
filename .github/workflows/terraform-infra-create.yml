@@ -367,6 +367,12 @@ jobs:
           chmod +x scripts/verify-evidence-storage.sh
           ./scripts/verify-evidence-storage.sh "${{ needs.resolve-environment.outputs.environment }}"
 
+      - name: Verify Single Public Entry & Path Routing
+        if: inputs.action != 'plan'
+        run: |
+          chmod +x scripts/test-single-entry-routing.sh
+          ./scripts/test-single-entry-routing.sh "${{ needs.resolve-environment.outputs.environment }}"
+
       # ------------------------------------------------------------------------
       # 1.3 EXPORT OUTPUTS
       # ------------------------------------------------------------------------

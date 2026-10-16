@@ -359,6 +359,10 @@ jobs:
         working-directory: src/frontend
         run: npm test -- --coverage --watchAll=false
 
+      - name: Verify Single Public Entry & Path Routing Contract
+        run: |
+          python3 scripts/verify_single_entry.py
+
       - name: Frontend Not Available Yet
         if: steps.frontend-check.outputs.exists == 'false'
         run: |
