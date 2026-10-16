@@ -1,10 +1,5 @@
 # Single Public Entry Point & Path-Based Routing (Decision AD4)
 
-**Jira Subtask:** `AS-CN-I-L-03` (`EWSS-29`)
-**Stage:** Implementation (0.30 person-days)
-**Predecessors:** `AS-CN-I-L-02` (`EWSS-27`), Decision `AD4`
-**Owner:** Lakshanya Poovannan
-
 ---
 
 ## 1. Architectural Context & Decision AD4
