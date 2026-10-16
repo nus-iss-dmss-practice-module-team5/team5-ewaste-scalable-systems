@@ -111,8 +111,7 @@ export function ClaimAction() {
   return (
     <section data-testid="claim-view" className="max-w-4xl">
       <p className="mb-4 max-w-xl text-sm text-slate-600">
-        Claim confirms the opportunity and ends the batch at APPROVED. It does
-        not assign a collector.
+        Claim confirms the opportunity and assigns the next available collector.
       </p>
       {USE_LOCAL_CLAIM_MOCK ? (
         <div className="mb-4">
@@ -141,7 +140,10 @@ export function ClaimAction() {
       {result ? (
         <Banner testId="claim-success" tone="success">
           Claim confirmed. Batch {result.batchId} is {result.status}. It leaves
-          Opportunities. No collector is assigned.
+          Opportunities.
+          {result.status === "ASSIGNED"
+            ? " Collector acceptance is pending."
+            : ""}
         </Banner>
       ) : null}
       {actionError ? (

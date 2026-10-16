@@ -34,6 +34,7 @@ type AssignmentView struct {
 	AssignmentStatus   string    `json:"assignment_status"`
 	AssignmentSequence int64     `json:"assignment_sequence"`
 	Version            int64     `json:"version"`
+	BatchVersion       int64     `json:"batch_version,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }

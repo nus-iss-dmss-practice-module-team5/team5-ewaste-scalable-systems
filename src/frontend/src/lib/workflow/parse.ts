@@ -170,12 +170,12 @@ export function parseClaimResult(value: unknown): ClaimResult {
     throw contractError("Claim response is not an object.");
   }
   const status = requireString(value, "status", "Claim");
-  if (status !== "APPROVED") {
-    throw contractError("Claim did not end at APPROVED.");
+  if (status !== "APPROVED" && status !== "ASSIGNED") {
+    throw contractError("Claim did not end at APPROVED or ASSIGNED.");
   }
   return {
     batchId: requireString(value, "batch_id", "Claim"),
-    status: "APPROVED",
+    status,
     version: requireNumber(value, "version", "Claim"),
     claimEpoch: requireString(value, "claim_epoch", "Claim"),
     claimId: requireString(value, "claim_id", "Claim"),
@@ -205,10 +205,12 @@ export function parseAssignment(value: unknown): Assignment {
     version: requireNumber(value, "version", "Assignment"),
   };
   const claimId = readString(value, "claim_id");
+  const batchVersion = readNumber(value, "batch_version");
   const collectorScopeId = readString(value, "collector_scope_id");
   const createdAt = readString(value, "created_at");
   const updatedAt = readString(value, "updated_at");
   if (claimId) assignment.claimId = claimId;
+  if (batchVersion !== undefined) assignment.batchVersion = batchVersion;
   if (collectorScopeId) assignment.collectorScopeId = collectorScopeId;
   if (createdAt) assignment.createdAt = createdAt;
   if (updatedAt) assignment.updatedAt = updatedAt;

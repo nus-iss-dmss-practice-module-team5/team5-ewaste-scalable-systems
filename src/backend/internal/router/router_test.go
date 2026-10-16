@@ -388,3 +388,29 @@ func TestNewServiceRouterRejectsUnknownService(t *testing.T) {
 		t.Fatal("expected unknown service to be rejected")
 	}
 }
+
+func TestSplitWorkflowKeepsAnalyticsWorkerPathsAuthenticated(t *testing.T) {
+	deps := ServiceDependencies{AnalyticsController: controller.NewAnalyticsController(nil, zap.NewNop()), AnalyticsServiceToken: "test-analytics-service-token-longer-than-32-chars"}
+	for _, serviceName := range []Service{BatchWorkflowService, ClaimLogisticsService, CustodyVerificationService, IdentityAccessService} {
+		router, err := NewServiceRouter(serviceName, deps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, route := range []struct{ method, path string }{
+			{http.MethodGet, "/api/v1/batches/batch-1/analytics-input"},
+			{http.MethodPost, "/api/v1/batches/batch-1/analytics-results"},
+			{http.MethodGet, "/internal/v1/analytics/batches/batch-1/input"},
+			{http.MethodPost, "/internal/v1/analytics/batches/batch-1/results"},
+		} {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(route.method, route.path, nil))
+			want := http.StatusNotFound
+			if serviceName == BatchWorkflowService {
+				want = http.StatusUnauthorized
+			}
+			if recorder.Code != want {
+				t.Errorf("%s %s: got %d want %d", serviceName, route.path, recorder.Code, want)
+			}
+		}
+	}
+}

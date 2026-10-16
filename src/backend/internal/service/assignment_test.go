@@ -117,6 +117,12 @@ func (t *fakeAssignmentTransaction) FindLatestAssignment(context.Context, string
 	}
 	return t.repo.assignment, nil
 }
+func (t *fakeAssignmentTransaction) FindAssignmentBatchID(context.Context, string) (string, error) {
+	if t.repo.assignment == nil {
+		return "", repository.ErrAssignmentNotFound
+	}
+	return t.repo.assignment.BatchID, nil
+}
 func (t *fakeAssignmentTransaction) FindAssignmentForUpdate(context.Context, string) (*model.BatchAssignment, error) {
 	if t.repo.assignment == nil {
 		return nil, repository.ErrAssignmentNotFound

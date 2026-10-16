@@ -99,3 +99,10 @@ func TestParseProcessingStatusRejectsNonProcessingStates(t *testing.T) {
 		}
 	}
 }
+
+func TestAssignmentReadDistinguishesBatchAndAssignmentVersions(t *testing.T) {
+	view := assignmentToDTO(&model.BatchAssignment{ID: "assignment-1", Version: 1, BatchVersion: 7})
+	if view.Version != 1 || view.BatchVersion != 7 {
+		t.Fatalf("versions lost: %+v", view)
+	}
+}

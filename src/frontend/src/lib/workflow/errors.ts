@@ -1,5 +1,40 @@
 import axios from "axios";
 
+export type AssignmentCurrentState = {
+  assignmentId: string;
+  assignmentStatus: string;
+  assignmentVersion: number;
+  batchId: string;
+  batchStatus: string;
+  batchVersion: number;
+  currentAssignmentId?: string;
+};
+
+function readCurrentState(value: unknown): AssignmentCurrentState | undefined {
+  if (
+    !isRecord(value) ||
+    typeof value.assignment_id !== "string" ||
+    typeof value.assignment_status !== "string" ||
+    typeof value.assignment_version !== "number" ||
+    typeof value.batch_id !== "string" ||
+    typeof value.batch_status !== "string" ||
+    typeof value.batch_version !== "number"
+  )
+    return undefined;
+  return {
+    assignmentId: value.assignment_id,
+    assignmentStatus: value.assignment_status,
+    assignmentVersion: value.assignment_version,
+    batchId: value.batch_id,
+    batchStatus: value.batch_status,
+    batchVersion: value.batch_version,
+    currentAssignmentId:
+      typeof value.current_assignment_id === "string"
+        ? value.current_assignment_id
+        : undefined,
+  };
+}
+
 export type WorkflowErrorKind =
   | "validation"
   | "forbidden"
@@ -16,6 +51,7 @@ export class WorkflowError extends Error {
   readonly code: string;
   readonly correlationId: string;
   readonly status?: number;
+  readonly currentState?: AssignmentCurrentState;
 
   constructor(
     message: string,
@@ -23,6 +59,7 @@ export class WorkflowError extends Error {
     code: string,
     correlationId: string,
     status?: number,
+    currentState?: AssignmentCurrentState,
   ) {
     super(message);
     this.name = "WorkflowError";
@@ -30,6 +67,7 @@ export class WorkflowError extends Error {
     this.code = code;
     this.correlationId = correlationId;
     this.status = status;
+    this.currentState = currentState;
   }
 }
 
@@ -105,6 +143,9 @@ export function toWorkflowError(error: unknown): WorkflowError {
       body.code,
       body.correlationId,
       error.response.status,
+      body.code === "STALE_VERSION" && isRecord(error.response.data)
+        ? readCurrentState(error.response.data.current_state)
+        : undefined,
     );
   }
   return new WorkflowError(
