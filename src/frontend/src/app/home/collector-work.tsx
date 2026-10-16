@@ -2,6 +2,16 @@
 
 import { useSession } from "@/lib/auth/session-context";
 import {
+  latestSavedAt,
+  loadAssignments,
+  saveAssignments,
+} from "@/lib/offline/assignments";
+import {
+  deviceWriteToken,
+  queueDeviceWrite,
+  type DeviceWriteToken,
+} from "@/lib/offline/device-writes";
+import {
   acceptAssignment,
   listAssignments,
   listBatches,
@@ -41,6 +51,7 @@ const MAX_ACTUAL_ITEM_COUNT = 100000;
 const BATCH_VERSIONS_KEY = "collector-batch-versions";
 const MISSING_BATCH_VERSION =
   "This assignment has no batch version. Refresh the assignment before sending an update.";
+const NEEDS_CONNECTION = "This needs a connection. Reconnect and try again.";
 
 // The handoff API compares If-Match-Version to the batch version. Selection
 // increments that version by one. The assignment's own version stays 1 and
@@ -111,7 +122,12 @@ function selectBlockReason(batch: Batch): string | null {
 }
 
 export function CollectorWork({ history = false }: { history?: boolean }) {
-  const { session } = useSession();
+  const { session, offlineUser, isOffline } = useSession();
+  // Offline, assignments come from this device and every command is blocked.
+  const user = session?.user ?? offlineUser ?? null;
+  const userId = user?.id;
+  const offline = Boolean(isOffline) || (!session && Boolean(offlineUser));
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [available, setAvailable] = useState<Batch[] | null>(null);
   const [assignments, setAssignments] = useState<Assignment[] | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -136,17 +152,71 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
   const rejectKey = useRetryKey();
   const failKey = useRetryKey();
   const handoffKey = useRetryKey();
+  // Each load gets a number. A load that finishes after a newer one started
+  // (for example a network error arriving after the device went offline and
+  // the saved list was shown) is ignored.
+  const loadGeneration = useRef(0);
 
   const active =
     assignments?.find((row) => row.assignmentId === selectedAssignment) ?? null;
 
-  async function reload() {
-    if (!session) {
+  // Keeps the latest list for offline use. A failure here must never
+  // affect the online screen. `token` is taken when the load started, so a
+  // sign-out that cleared this device in the meantime drops the save.
+  function keepOnDevice(rows: Assignment[], token: DeviceWriteToken) {
+    const id = session?.user?.id;
+    if (!id) {
       return;
     }
+    queueDeviceWrite(token, async () => {
+      await saveAssignments(id, rows, readBatchVersions());
+    }).catch((error: unknown) => {
+      console.warn("Could not save assignments on this device.", error);
+    });
+  }
+
+  async function reloadSaved(generation: number) {
     setLoadError(null);
     setAvailable(null);
     setAssignments(null);
+    let rows: Assignment[] = [];
+    let saved: string | null = null;
+    if (userId) {
+      try {
+        const records = await loadAssignments(userId);
+        rows = records.map((record) => record.assignment);
+        saved = latestSavedAt(records);
+      } catch (error) {
+        console.warn("Could not read assignments saved on this device.", error);
+      }
+    }
+    if (generation !== loadGeneration.current) {
+      return;
+    }
+    // Available batches need the network, so none are listed offline.
+    setAvailable([]);
+    setAssignments(rows);
+    setSavedAt(saved);
+  }
+
+  async function reload() {
+    const generation = ++loadGeneration.current;
+    if (offline) {
+      await reloadSaved(generation);
+      return;
+    }
+    if (!session) {
+      return;
+    }
+    const saveToken = deviceWriteToken();
+    setLoadError(null);
+    setAvailable(null);
+    setAssignments(null);
+    setSavedAt(null);
+    // Back online, the earlier "needs a connection" message no longer applies.
+    setActionError((current) =>
+      current?.testId === "collector-needs-connection" ? null : current,
+    );
     try {
       const [batches, assigned] = await Promise.all([
         history
@@ -154,9 +224,16 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
           : listBatches(session.tokens.accessToken, { status: "APPROVED" }),
         listAssignments(session.tokens.accessToken),
       ]);
+      if (generation !== loadGeneration.current) {
+        return;
+      }
       setAvailable(batches.data);
       setAssignments(assigned.data);
+      keepOnDevice(assigned.data, saveToken);
     } catch (error) {
+      if (generation !== loadGeneration.current) {
+        return;
+      }
       setLoadError(error);
       setAvailable([]);
       setAssignments([]);
@@ -167,9 +244,28 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
     const timer = window.setTimeout(() => {
       void reload();
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      // Whatever the current load returns now belongs to an older state.
+      loadGeneration.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.tokens.accessToken, history]);
+  }, [session?.tokens.accessToken, history, offline, userId]);
+
+  // Every command checks the connection here first. EWSS-26 makes handoff and
+  // failed pickup save an offline draft at this point instead of blocking.
+  function requireOnline(): boolean {
+    if (!offline) {
+      return true;
+    }
+    setNotice(null);
+    setActionError({
+      testId: "collector-needs-connection",
+      tone: "warning",
+      text: NEEDS_CONNECTION,
+    });
+    return false;
+  }
 
   function beginCommand() {
     setPending(true);
@@ -190,6 +286,9 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
   }
 
   async function onSelect(batch: Batch) {
+    if (!requireOnline()) {
+      return;
+    }
     const { claimEpoch, collectorScopeId } = batch;
     if (!session || !claimEpoch || !collectorScopeId) {
       return;
@@ -223,6 +322,9 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
 
   async function onReject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!requireOnline()) {
+      return;
+    }
     if (!session || !active || !rejectionReason.trim()) {
       return;
     }
@@ -261,6 +363,9 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
 
   async function onFail(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!requireOnline()) {
+      return;
+    }
     if (!session || !active) {
       return;
     }
@@ -309,6 +414,9 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
 
   async function onHandoff(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!requireOnline()) {
+      return;
+    }
     if (!session || !active) {
       return;
     }
@@ -386,6 +494,9 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
   }
 
   async function onAccept() {
+    if (!requireOnline()) {
+      return;
+    }
     if (!session || !active || active.assignmentStatus !== "PENDING") return;
     const version = active.batchVersion ?? batchMatchVersion(active.batchId);
     if (version === null) {
@@ -449,6 +560,14 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
           Loading collector work…
         </LoadingLine>
       ) : null}
+      {offline && savedAt ? (
+        <p
+          data-testid="collector-saved-at"
+          className="mb-3 text-sm text-slate-600"
+        >
+          Saved on this device {formatWhen(savedAt)}.
+        </p>
+      ) : null}
       {loadBanner ? (
         <Banner testId={loadBanner.testId} tone={loadBanner.tone}>
           {loadBanner.text}
@@ -464,18 +583,29 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
           <Banner testId={actionError.testId} tone={actionError.tone}>
             {actionError.text}
           </Banner>
-          <button
-            type="button"
-            data-testid="collector-retry"
-            className="mt-2 text-sm font-medium text-teal-800"
-            onClick={() => void reload()}
-          >
-            Refresh and retry
-          </button>
+          {offline ? null : (
+            <button
+              type="button"
+              data-testid="collector-retry"
+              className="mt-2 text-sm font-medium text-teal-800"
+              onClick={() => void reload()}
+            >
+              Refresh and retry
+            </button>
+          )}
         </div>
       ) : null}
 
-      {!history && available && available.length === 0 && !loadError ? (
+      {!history && offline && available ? (
+        <Banner testId="collector-available-offline" tone="info">
+          Available batches need a connection.
+        </Banner>
+      ) : null}
+      {!history &&
+      !offline &&
+      available &&
+      available.length === 0 &&
+      !loadError ? (
         <Banner testId="collector-available-empty" tone="info">
           No APPROVED batches are available for your scope.
         </Banner>
@@ -526,7 +656,18 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
         </table>
       ) : null}
 
-      {assignments && visibleAssignments.length === 0 && !loadError ? (
+      {offline && assignments && assignments.length === 0 ? (
+        <div className="mt-3">
+          <Banner testId="collector-saved-empty" tone="info">
+            No assignments are saved on this device. Open Assignments while
+            online to save them.
+          </Banner>
+        </div>
+      ) : null}
+      {assignments &&
+      visibleAssignments.length === 0 &&
+      !loadError &&
+      !(offline && assignments.length === 0) ? (
         <Banner testId="collector-assignments-empty" tone="info">
           {history
             ? "No completed or failed assignments yet."

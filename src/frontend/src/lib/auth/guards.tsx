@@ -13,21 +13,24 @@ export function Redirecting({ children = "Loading…" }: { children?: string }) 
   );
 }
 
+// Offline, the last user on this device may see their saved work without a
+// session. Pages read that user from useSession().offlineUser.
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { session, ready } = useSession();
+  const { session, ready, offlineUser } = useSession();
+  const allowed = Boolean(session || offlineUser);
 
   useEffect(() => {
-    if (!ready || session) {
+    if (!ready || allowed) {
       return;
     }
     replaceLocation(LOGIN_PATH);
-  }, [ready, session]);
+  }, [ready, allowed]);
 
   if (!ready) {
     return <Redirecting />;
   }
 
-  if (!session) {
+  if (!allowed) {
     return <Redirecting>Redirecting to sign in…</Redirecting>;
   }
 

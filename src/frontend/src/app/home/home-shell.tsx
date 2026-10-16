@@ -10,19 +10,24 @@ import { DonorBatchForm, DonorBatchList } from "./donor-batches";
 import { ImpactView } from "./impact";
 import { OpportunityView } from "./opportunities";
 import { ProcessingWork } from "./processing";
+import { Banner } from "./workflow-ui";
 
 export function HomeShell() {
-  const { session, justRenewed, logout } = useSession();
+  const { session, justRenewed, logout, offlineUser, isOffline } = useSession();
   const [activeNav, setActiveNav] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   // The batch an Auditor opened from the Impact list.
   const [custodyBatchId, setCustodyBatchId] = useState<string>();
 
-  if (!session) {
+  // Offline, the last user on this device may open the shell without a
+  // session. Only the collector's saved assignments work then.
+  const user = session?.user ?? offlineUser ?? null;
+  if (!user) {
     return null;
   }
 
-  const { user } = session;
+  const offline = Boolean(isOffline) || !session;
+  const worksOffline = user.role === "COLLECTOR";
   const nav = ROLE_NAV[user.role];
   const current = activeNav ?? nav[0]?.id;
   const currentItem = nav.find((item) => item.id === current);
@@ -30,7 +35,11 @@ export function HomeShell() {
   const title =
     current === nav[0]?.id ? ROLE_HOME_TITLE[user.role] : currentItem?.label;
   const workflow =
-    user.role === "DONOR" && current === "requests" ? (
+    offline && !worksOffline ? (
+      <Banner testId="offline-needs-connection" tone="info">
+        This section needs a connection. Reconnect to continue.
+      </Banner>
+    ) : user.role === "DONOR" && current === "requests" ? (
       <DonorBatchList />
     ) : user.role === "DONOR" && current === "new-request" ? (
       <DonorBatchForm />
@@ -115,6 +124,18 @@ export function HomeShell() {
             >
               Session renewed.
             </p>
+          ) : null}
+          {offline ? (
+            <div className="mb-4 max-w-xl">
+              <Banner testId="offline-banner" tone="warning">
+                {worksOffline
+                  ? "You're offline. Showing assignments saved on this device."
+                  : "You're offline."}
+                {session
+                  ? " Actions need a connection."
+                  : " Sign in again when you're back online."}
+              </Banner>
+            </div>
           ) : null}
           {workflow ? (
             workflow
