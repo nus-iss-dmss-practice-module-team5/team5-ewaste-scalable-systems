@@ -12,13 +12,14 @@ import (
 )
 
 var (
-	ErrAssignmentBatchNotFound    = errors.New("repository: assignment batch not found")
-	ErrAssignmentNotFound         = errors.New("repository: assignment not found")
-	ErrAssignmentCommandNotFound  = errors.New("repository: assignment command not found")
-	ErrAssignmentScopeNotFound    = errors.New("repository: collector scope not found")
-	ErrAssignmentClaimNotFound    = errors.New("repository: accepted claim not found")
-	ErrAssignmentConcurrency      = errors.New("repository: assignment concurrency conflict")
-	ErrAssignmentActorNotEligible = errors.New("repository: assignment actor is not eligible")
+	ErrAssignmentBatchNotFound     = errors.New("repository: assignment batch not found")
+	ErrAssignmentNotFound          = errors.New("repository: assignment not found")
+	ErrAssignmentCommandNotFound   = errors.New("repository: assignment command not found")
+	ErrAssignmentScopeNotFound     = errors.New("repository: collector scope not found")
+	ErrAssignmentClaimNotFound     = errors.New("repository: accepted claim not found")
+	ErrAssignmentConcurrency       = errors.New("repository: assignment concurrency conflict")
+	ErrAssignmentActorNotEligible  = errors.New("repository: assignment actor is not eligible")
+	ErrAssignmentNoActiveCollector = errors.New("repository: no active collector")
 )
 
 type AssignmentRepository interface {
@@ -34,6 +35,8 @@ type AssignmentTransaction interface {
 	FindBatchForUpdate(context.Context, string) (*model.Batch, error)
 	FindAcceptedClaimReservation(context.Context, *model.Batch) (*model.BatchClaim, *model.CapacityReservation, error)
 	FindCollectorScope(context.Context, string, string, string, string, time.Time) (*model.RecyclerCollectorScope, error)
+	FindMostRecentCollector(context.Context, string, string) (*CollectorCandidate, error)
+	FindNextActiveCollector(context.Context, string, string, *CollectorCandidate, string, time.Time) (*CollectorCandidate, error)
 	FindLatestAssignment(context.Context, string) (*model.BatchAssignment, error)
 	FindAssignmentForUpdate(context.Context, string) (*model.BatchAssignment, error)
 	CreateAssignment(context.Context, *model.BatchAssignment) error
@@ -167,6 +170,14 @@ func (t *gormAssignmentTransaction) FindCollectorScope(ctx context.Context, scop
 		return nil, err
 	}
 	return &scope, nil
+}
+
+func (t *gormAssignmentTransaction) FindMostRecentCollector(ctx context.Context, recyclerOrgID, zone string) (*CollectorCandidate, error) {
+	return findMostRecentCollector(ctx, t.db, recyclerOrgID, zone)
+}
+
+func (t *gormAssignmentTransaction) FindNextActiveCollector(ctx context.Context, recyclerOrgID, zone string, after *CollectorCandidate, excludeUserID string, now time.Time) (*CollectorCandidate, error) {
+	return findNextActiveCollector(ctx, t.db, recyclerOrgID, zone, after, excludeUserID, now)
 }
 
 func (t *gormAssignmentTransaction) FindLatestAssignment(ctx context.Context, batchID string) (*model.BatchAssignment, error) {

@@ -84,8 +84,12 @@ func TestAssignmentProducersMatchApprovedContracts(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(repo.outbox) != 2 || len(repo.handoffs) != 1 {
-					t.Fatal("pickup must enqueue one event and record one handoff")
+				expectedOutbox := 2
+				if failed {
+					expectedOutbox = 3 // CollectionFailed followed by the replacement assignment.
+				}
+				if len(repo.outbox) != expectedOutbox || len(repo.handoffs) != 1 {
+					t.Fatal("pickup must enqueue its event(s) and record one handoff")
 				}
 				eventType, topic := model.CollectionCompletedEventType, "batch.collection.completed"
 				pickupAt := "2026-01-01T10:30:00.123456Z"
@@ -98,6 +102,11 @@ func TestAssignmentProducersMatchApprovedContracts(t *testing.T) {
 					t.Errorf("collection event lost historical scope or pickup time: %v", data)
 				}
 				if failed {
+					replacement := repo.outbox[2]
+					replacementData := validateC4ProducerEvent(t, replacement, model.CollectorAssignedEventType, "batch.collector.assigned")
+					if replacement.SequenceInCommand != 2 || replacementData["previous_assignment_id"] != selection.Data.AssignmentID || replacementData["collector_user_id"] == "USR-001" {
+						t.Fatalf("failed pickup did not move to the next collector: %+v", replacementData)
+					}
 					for _, field := range []string{"actual_item_count", "verification_hash"} {
 						if _, present := data[field]; present {
 							t.Errorf("failed pickup must not contain %s", field)

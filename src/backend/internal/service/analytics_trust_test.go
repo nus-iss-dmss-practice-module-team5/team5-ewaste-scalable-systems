@@ -120,7 +120,7 @@ func TestAnalyticsTrustRejectsTamperedIdentifiers(t *testing.T) {
 }
 
 func TestAnalyticsTrustRejectsUnsupportedRuleVersions(t *testing.T) {
-	cases := []analyticsTamper{}
+	var cases []analyticsTamper
 	for name, version := range map[string]string{
 		"next version":      "d3-v2",
 		"previous version":  "d3-v0",

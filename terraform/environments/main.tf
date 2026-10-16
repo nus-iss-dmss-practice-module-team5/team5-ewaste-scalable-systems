@@ -1024,6 +1024,16 @@ resource "azurerm_container_app" "claim" {
   }
 
   secret {
+    name  = "refresh-secret"
+    value = var.auth_refresh_secret
+  }
+
+  secret {
+    name  = "refresh-hash-secret"
+    value = var.auth_refresh_hash_secret
+  }
+
+  secret {
     name  = "kafka-conn"
     value = azurerm_eventhub_namespace_authorization_rule.app_auth.primary_connection_string
   }
@@ -1109,8 +1119,33 @@ resource "azurerm_container_app" "claim" {
       }
 
       env {
+        name  = "EWASTE_AUTH_ISSUER"
+        value = "ewaste-claim-logistics"
+      }
+
+      env {
         name        = "EWASTE_AUTH_ACCESS_SECRET"
         secret_name = "access-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_REFRESH_SECRET"
+        secret_name = "refresh-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_REFRESH_HASH_SECRET"
+        secret_name = "refresh-hash-secret"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_ACCESS_TTL"
+        value = "15m"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_REFRESH_TTL"
+        value = "24h"
       }
 
       env {
@@ -1209,8 +1244,23 @@ resource "azurerm_container_app" "custody" {
   }
 
   secret {
+    name  = "redis-password"
+    value = azurerm_redis_cache.redis.primary_access_key
+  }
+
+  secret {
     name  = "access-secret"
     value = var.auth_access_secret
+  }
+
+  secret {
+    name  = "refresh-secret"
+    value = var.auth_refresh_secret
+  }
+
+  secret {
+    name  = "refresh-hash-secret"
+    value = var.auth_refresh_hash_secret
   }
 
   secret {
@@ -1274,8 +1324,58 @@ resource "azurerm_container_app" "custody" {
       }
 
       env {
+        name  = "EWASTE_REDIS_ADDRESS"
+        value = "${azurerm_redis_cache.redis.hostname}:6380"
+      }
+
+      env {
+        name        = "REDIS_PASSWORD"
+        secret_name = "redis-password"
+      }
+
+      env {
+        name        = "EWASTE_REDIS_PASSWORD"
+        secret_name = "redis-password"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_DB"
+        value = "0"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_TLS_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_ISSUER"
+        value = "ewaste-custody-verification"
+      }
+
+      env {
         name        = "EWASTE_AUTH_ACCESS_SECRET"
         secret_name = "access-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_REFRESH_SECRET"
+        secret_name = "refresh-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_REFRESH_HASH_SECRET"
+        secret_name = "refresh-hash-secret"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_ACCESS_TTL"
+        value = "15m"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_REFRESH_TTL"
+        value = "24h"
       }
 
       env {
@@ -1378,6 +1478,7 @@ resource "azurerm_container_app" "custody" {
     azurerm_role_assignment.acr_pull,
     azurerm_private_endpoint.acr,
     azurerm_mysql_flexible_server.db,
+    azurerm_redis_cache.redis,
     azurerm_role_assignment.eventhub_sender,
     azurerm_eventhub_namespace_authorization_rule.app_auth,
     azurerm_role_assignment.storage_blob_data_contributor,

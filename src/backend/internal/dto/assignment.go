@@ -44,3 +44,15 @@ type AssignmentMutationResult struct {
 	EventID       string         `json:"event_id,omitempty"`
 	EventState    string         `json:"event_state,omitempty"`
 }
+
+// AssignmentCurrentState is returned with STALE_VERSION so an offline client
+// can show the server state and stop retrying its obsolete draft.
+type AssignmentCurrentState struct {
+	AssignmentID        string  `json:"assignment_id"`
+	AssignmentStatus    string  `json:"assignment_status"`
+	AssignmentVersion   int64   `json:"assignment_version"`
+	BatchID             string  `json:"batch_id"`
+	BatchStatus         string  `json:"batch_status"`
+	BatchVersion        int64   `json:"batch_version"`
+	CurrentAssignmentID *string `json:"current_assignment_id,omitempty"`
+}
