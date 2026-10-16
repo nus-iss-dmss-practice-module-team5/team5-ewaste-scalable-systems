@@ -26,6 +26,7 @@ export const ROLE_NAV: Record<Role, NavItem[]> = {
   COLLECTOR: [
     { id: "assignments", label: "Assignments" },
     { id: "history", label: "History" },
+    { id: "drafts", label: "Offline drafts" },
   ],
   AUDITOR: [
     { id: "custody", label: "Custody" },

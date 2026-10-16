@@ -30,3 +30,27 @@ Copy `.env.example` at the repo root for the API base URL. Do not commit `.env` 
 - Access JWT expiry (`expires_in` from the login response) refreshes silently. Refresh JWT expiry or revocation sends you to `/login?expired=1` with **Your session expired. Please sign in again.**
 - **Logout** returns to `/login` with no expiry banner.
 - **F5 / reload** keeps you on `/home` if the session is still valid. Closing the tab ends the session. This is not `localStorage`; a tab-only copy is used.
+
+## PWA / offline shell
+
+The app can be installed and keeps a cached shell (`/home`, `/login`), so it opens without a network. The service worker only runs in **production builds**. `npm run dev` never registers it.
+
+To try it locally:
+
+```bash
+npm run build && npm start
+```
+
+- **Chrome / Edge:** open http://localhost:3000, then go to DevTools > Application. *Manifest* shows the name, the icons and the install prompt. *Service workers* shows `/sw.js?v=<build>`. *Cache storage* shows the caches. Tick *Offline* under Network and reload `/home` to see the cached shell.
+- **iOS Safari:** Share > **Add to Home Screen**. This needs HTTPS, so use a deployed environment. iOS reads the `apple-touch-icon` and `apple-mobile-web-app-*` tags set in `layout.tsx`.
+
+How it works:
+
+- `src/app/manifest.ts` is served at `/manifest.webmanifest` (`start_url` `/home`, standalone, theme `#134e4a`). The theme colour is repeated in `viewport` in `layout.tsx`.
+- `src/lib/offline/register-sw.ts` registers `public/sw.js` as `/sw.js?v=<BUILD_ID>`. `next.config.ts` takes `BUILD_ID` from the `BUILD_ID` env var. Without it, the build uses the git commit, then a timestamp. In Docker, pass `--build-arg BUILD_ID=<sha>`.
+- There are two caches. `shell-<build>` holds the two pages, the manifest, the icons and the favicon. `static-<build>` holds `/_next/static/*`. When a new build activates, it deletes the old caches.
+- A new version installs in the background. It **does not take over until the app is closed and reopened**, so the UI never changes in the middle of a shift.
+- Pages come from the network first, with the cached copy as the offline fallback. `/_next/static/*` comes from the cache first. `/api/*` and RSC requests are never cached or intercepted.
+- After sign-in, `precacheLoadedStatic()` asks the worker to cache the chunks the tab has already loaded.
+
+The icons live in `public/icons`. To change the artwork, edit `scripts/generate-pwa-icons.mjs` and run `node scripts/generate-pwa-icons.mjs` (it needs no image libraries). Then commit the new PNGs.

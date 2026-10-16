@@ -2,6 +2,27 @@
 
 import { useSession } from "@/lib/auth/session-context";
 import {
+  latestSavedAt,
+  loadAssignments,
+  saveAssignments,
+} from "@/lib/offline/assignments";
+import {
+  deviceWriteToken,
+  queueDeviceWrite,
+  type DeviceWriteToken,
+} from "@/lib/offline/device-writes";
+import {
+  DraftLockedError,
+  discardDraft,
+  isFinalDraft,
+  listDrafts,
+  saveDraft,
+  subscribeDrafts,
+} from "@/lib/offline/drafts";
+import { stripObservedNote } from "@/lib/offline/observed-note";
+import { useOfflineSync } from "@/lib/offline/offline-sync-context";
+import type { OfflineDraft } from "@/lib/offline/types";
+import {
   listAssignments,
   listBatches,
   newIdempotencyKey,
@@ -10,36 +31,53 @@ import {
   reportFailedPickup,
   selectAssignment,
 } from "@/lib/workflow/api";
+import { isWorkflowError } from "@/lib/workflow/errors";
 import {
   FAILURE_REASONS,
   type Assignment,
   type Batch,
+  type FailPickupCommand,
   type FailureReason,
+  type HandoffCommand,
 } from "@/lib/workflow/types";
 import { FormEvent, Fragment, useEffect, useRef, useState } from "react";
 import { USE_LOCAL_COLLECTOR_MOCK } from "@/lib/workflow/local-collector-mock";
+import {
+  FAILURE_REASON_LABELS,
+  StateChip,
+  commandLabel,
+} from "./offline/draft-parts";
+import { OfflineRequired } from "./offline/offline-required";
 import {
   Banner,
   LoadingLine,
   bannerForError,
   formatWhen,
+  toLocalInput,
   toUtcIso,
 } from "./workflow-ui";
 
 type Notice = { testId: string; text: string };
 
-const FAILURE_REASON_LABELS: Record<FailureReason, string> = {
-  DONOR_UNAVAILABLE: "Donor unavailable",
-  INCORRECT_ITEMS: "Incorrect items",
-  ACCESS_DENIED: "Access denied",
-  DAMAGED_HAZARDOUS: "Damaged or hazardous items",
-  SAFETY_CANCEL: "Cancelled for safety",
-};
+/** A failed pickup or handoff, as sent online or saved as a draft. */
+type CapturedCommand =
+  | { command: "RECORD_HANDOFF"; payload: HandoffCommand }
+  | { command: "FAIL_PICKUP"; payload: FailPickupCommand };
 
 const MAX_ACTUAL_ITEM_COUNT = 100000;
 const BATCH_VERSIONS_KEY = "collector-batch-versions";
+// Until the API returns batch_version on assignments (EWSS-21), the version
+// is known only on the device that selected the batch (EWSS-15 PW-4).
 const MISSING_BATCH_VERSION =
-  "This assignment has no batch version from selection, so the update cannot be sent.";
+  "This assignment has no batch version from selection, so the update cannot be sent or saved. Open it online on this phone first.";
+const SAVED_ON_PHONE =
+  "Saved on this phone. It will be sent when you are online.";
+const SAVED_SIGNED_OUT =
+  "Saved on this phone. Sign in and confirm it to send it.";
+const DRAFT_LOCKED =
+  "A draft for this assignment is being sent. Wait for the answer in Drafts before saving another.";
+const DRAFT_SAVE_FAILED =
+  "Could not save this on the phone. Keep the details and try again.";
 
 // The handoff API compares If-Match-Version to the batch version. Selection
 // increments that version by one. The assignment's own version stays 1 and
@@ -82,6 +120,40 @@ function batchMatchVersion(batchId: string): number | null {
   return readBatchVersions()[batchId] ?? null;
 }
 
+// The API's (or the saved copy's) batch version first; after the app was
+// closed and reopened offline, sessionStorage is empty and only the saved
+// copy has it.
+function versionFor(assignment: Assignment): number | null {
+  return assignment.batchVersion ?? batchMatchVersion(assignment.batchId);
+}
+
+// No HTTP answer (lost connection or timeout): the command may or may not
+// have reached the server.
+function isLostReply(error: unknown): boolean {
+  return (
+    isWorkflowError(error) &&
+    error.kind === "network" &&
+    error.status === undefined
+  );
+}
+
+function openDraftFor(
+  drafts: OfflineDraft[],
+  userId: string | undefined,
+  assignmentId: string,
+): OfflineDraft | null {
+  const open = drafts.filter(
+    (draft) =>
+      draft.userId === userId &&
+      draft.assignmentId === assignmentId &&
+      !isFinalDraft(draft),
+  );
+  return open.reduce<OfflineDraft | null>(
+    (latest, draft) => (latest === null || draft.seq > latest.seq ? draft : latest),
+    null,
+  );
+}
+
 // Kept until the command succeeds or its payload changes, so retrying after a
 // timeout replays the same command instead of sending a new one.
 function useRetryKey() {
@@ -109,8 +181,35 @@ function selectBlockReason(batch: Batch): string | null {
   return null;
 }
 
-export function CollectorWork({ history = false }: { history?: boolean }) {
-  const { session } = useSession();
+export type CollectorWorkProps = {
+  history?: boolean;
+  /**
+   * A REJECTED draft the collector chose to fix from Drafts (EWSS-15: "the
+   * form with the message"). Its assignment opens with the form filled from
+   * the draft and the server's message shown. Read once, when mounted.
+   */
+  fix?: OfflineDraft;
+  /** Called once the corrected command was sent or saved as a new draft. */
+  onFixDone?: () => void;
+};
+
+export function CollectorWork({
+  history = false,
+  fix,
+  onFixDone,
+}: CollectorWorkProps) {
+  const { session, offlineUser, isOffline } = useSession();
+  const { syncNow } = useOfflineSync();
+  // Offline, assignments come from this device. Handoff and failed pickup are
+  // saved as drafts; select and reject need a connection.
+  const user = session?.user ?? offlineUser ?? null;
+  const userId = user?.id;
+  const offline = Boolean(isOffline) || (!session && Boolean(offlineUser));
+  // Offline mode after reopening has the last user but no token (EWSS-15
+  // rule 7): drafts saved then wait for the owner to confirm them.
+  const signedOut = !session?.tokens?.accessToken;
+  const [drafts, setDrafts] = useState<OfflineDraft[]>([]);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [available, setAvailable] = useState<Batch[] | null>(null);
   const [assignments, setAssignments] = useState<Assignment[] | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -119,32 +218,142 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
     typeof bannerForError
   > | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [fixing, setFixing] = useState<OfflineDraft | null>(fix ?? null);
+  const fixFail = fix?.command === "FAIL_PICKUP" ? fix.payload : null;
+  const fixHandoff = fix?.command === "RECORD_HANDOFF" ? fix.payload : null;
   const [selectedAssignment, setSelectedAssignment] = useState<string | null>(
-    null,
+    fix?.assignmentId ?? null,
   );
   const [rejectionReason, setRejectionReason] = useState("");
-  const [failureReason, setFailureReason] = useState<FailureReason | "">("");
-  const [observedDetails, setObservedDetails] = useState("");
-  const [representative, setRepresentative] = useState("");
-  const [actualCount, setActualCount] = useState("");
-  const [pickupAt, setPickupAt] = useState("");
-  const [verificationHash, setVerificationHash] = useState("");
-  const [handoffNotes, setHandoffNotes] = useState("");
+  const [failureReason, setFailureReason] = useState<FailureReason | "">(
+    fixFail?.failureReason ?? "",
+  );
+  // The store adds the observed-offline note again when the fix is saved.
+  const [observedDetails, setObservedDetails] = useState(
+    stripObservedNote(fixFail?.observedDetails),
+  );
+  const [representative, setRepresentative] = useState(
+    fixHandoff?.donorRepresentativeName ?? "",
+  );
+  const [actualCount, setActualCount] = useState(
+    fixHandoff ? String(fixHandoff.actualItemCount) : "",
+  );
+  const [pickupAt, setPickupAt] = useState(
+    toLocalInput(fixHandoff?.pickupOccurredAt),
+  );
+  const [verificationHash, setVerificationHash] = useState(
+    fixHandoff?.verificationHash ?? "",
+  );
+  const [handoffNotes, setHandoffNotes] = useState(fixHandoff?.notes ?? "");
   const selectKey = useRetryKey();
   const rejectKey = useRetryKey();
   const failKey = useRetryKey();
   const handoffKey = useRetryKey();
+  // Each load gets a number. A load that finishes after a newer one started
+  // (for example a network error arriving after the device went offline and
+  // the saved list was shown) is ignored.
+  const loadGeneration = useRef(0);
 
   const active =
     assignments?.find((row) => row.assignmentId === selectedAssignment) ?? null;
+  const activeDraft = active
+    ? openDraftFor(drafts, userId, active.assignmentId)
+    : null;
 
-  async function reload() {
-    if (!session) {
+  // Drafts on this device, refreshed after every draft write in any tab.
+  useEffect(() => {
+    if (!userId) {
       return;
     }
+    let cancelled = false;
+    const load = () => {
+      listDrafts(userId)
+        .then((rows) => {
+          if (!cancelled) {
+            setDrafts(rows);
+          }
+        })
+        .catch((error: unknown) => {
+          console.warn("Could not read drafts saved on this device.", error);
+        });
+    };
+    load();
+    const unsubscribe = subscribeDrafts(load);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [userId]);
+
+  // Keeps the latest list for offline use. A failure here must never
+  // affect the online screen. `token` is taken when the load started, so a
+  // sign-out that cleared this device in the meantime drops the save.
+  function keepOnDevice(rows: Assignment[], token: DeviceWriteToken) {
+    const id = session?.user?.id;
+    if (!id) {
+      return;
+    }
+    queueDeviceWrite(token, async () => {
+      // A reopened app has an empty sessionStorage, so the versions saved
+      // earlier for the same assignments are kept instead of lost.
+      const kept: Record<string, number> = {};
+      const current = new Set(rows.map((row) => row.assignmentId));
+      for (const record of await loadAssignments(id)) {
+        if (current.has(record.assignmentId) && record.batchVersion !== null) {
+          kept[record.assignment.batchId] = record.batchVersion;
+        }
+      }
+      await saveAssignments(id, rows, { ...kept, ...readBatchVersions() });
+    }).catch((error: unknown) => {
+      console.warn("Could not save assignments on this device.", error);
+    });
+  }
+
+  async function reloadSaved(generation: number) {
     setLoadError(null);
     setAvailable(null);
     setAssignments(null);
+    let rows: Assignment[] = [];
+    let saved: string | null = null;
+    if (userId) {
+      try {
+        const records = await loadAssignments(userId);
+        // The saved batch version is what a draft sends as If-Match-Version.
+        rows = records.map((record) => {
+          const batchVersion =
+            record.assignment.batchVersion ?? record.batchVersion;
+          return batchVersion === null || batchVersion === undefined
+            ? record.assignment
+            : { ...record.assignment, batchVersion };
+        });
+        saved = latestSavedAt(records);
+      } catch (error) {
+        console.warn("Could not read assignments saved on this device.", error);
+      }
+    }
+    if (generation !== loadGeneration.current) {
+      return;
+    }
+    // Available batches need the network, so none are listed offline.
+    setAvailable([]);
+    setAssignments(rows);
+    setSavedAt(saved);
+  }
+
+  async function reload() {
+    const generation = ++loadGeneration.current;
+    if (offline) {
+      await reloadSaved(generation);
+      return;
+    }
+    if (!session) {
+      return;
+    }
+    const saveToken = deviceWriteToken();
+    setLoadError(null);
+    setAvailable(null);
+    setAssignments(null);
+    setSavedAt(null);
     try {
       const [batches, assigned] = await Promise.all([
         history
@@ -152,9 +361,16 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
           : listBatches(session.tokens.accessToken, { status: "APPROVED" }),
         listAssignments(session.tokens.accessToken),
       ]);
+      if (generation !== loadGeneration.current) {
+        return;
+      }
       setAvailable(batches.data);
       setAssignments(assigned.data);
+      keepOnDevice(assigned.data, saveToken);
     } catch (error) {
+      if (generation !== loadGeneration.current) {
+        return;
+      }
       setLoadError(error);
       setAvailable([]);
       setAssignments([]);
@@ -165,9 +381,13 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
     const timer = window.setTimeout(() => {
       void reload();
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      // Whatever the current load returns now belongs to an older state.
+      loadGeneration.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.tokens.accessToken, history]);
+  }, [session?.tokens.accessToken, history, offline, userId]);
 
   function beginCommand() {
     setPending(true);
@@ -175,19 +395,140 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
     setNotice(null);
   }
 
-  async function finish(task: () => Promise<void>) {
+  // `onLostReply` runs instead of the error banner when the request got no
+  // answer, so a handoff or failed pickup is kept as a draft.
+  async function finish(
+    task: () => Promise<void>,
+    onLostReply?: () => Promise<void>,
+  ) {
     beginCommand();
     try {
       await task();
       await reload();
     } catch (error) {
-      setActionError(bannerForError(error, "collector-action"));
+      if (onLostReply && isLostReply(error)) {
+        await onLostReply();
+      } else {
+        setActionError(bannerForError(error, "collector-action"));
+      }
+    } finally {
+      setPending(false);
+    }
+  }
+
+  // The corrected command was sent or saved for the assignment being fixed:
+  // the refused draft is removed (a final draft never blocks the new one).
+  // Offline mode without a session leaves it, as it may only discard drafts
+  // it could itself have written; the collector can discard it after sign-in.
+  async function fixSaved(assignmentId: string) {
+    if (!fixing || fixing.assignmentId !== assignmentId) {
+      return;
+    }
+    setFixing(null);
+    if (session && userId) {
+      try {
+        await discardDraft(fixing.draftId, userId);
+      } catch (error) {
+        console.warn("Could not remove the refused draft.", error);
+      }
+    }
+    onFixDone?.();
+  }
+
+  function showValidation(text: string) {
+    setNotice(null);
+    setActionError({
+      testId: "collector-action-validation",
+      tone: "warning",
+      text,
+    });
+  }
+
+  /**
+   * Saves a handoff or failed pickup as an offline draft (EWSS-26). With
+   * `sentKey`, the command was already sent once without an answer: the
+   * draft reuses that Idempotency-Key and the exact payload, so the server
+   * replays the first result if it landed. Resolves true when saved.
+   */
+  async function saveOnPhone(
+    assignment: Assignment,
+    expectedVersion: number,
+    captured: CapturedCommand,
+    sentKey?: string,
+  ): Promise<boolean> {
+    if (!userId) {
+      return false;
+    }
+    const capturedSignedOut = sentKey ? false : signedOut;
+    try {
+      // With a reused key the store keeps the body exactly as sent (no
+      // "Observed offline at" note) and saves the draft frozen (rule 3).
+      await saveDraft({
+        userId,
+        assignmentId: assignment.assignmentId,
+        batchId: assignment.batchId,
+        expectedVersion,
+        capturedSignedOut,
+        idempotencyKey: sentKey,
+        ...captured,
+      });
+    } catch (error) {
+      if (error instanceof DraftLockedError) {
+        setActionError({
+          testId: "collector-draft-locked",
+          tone: "warning",
+          text: DRAFT_LOCKED,
+        });
+      } else {
+        console.warn("Could not save the draft on this device.", error);
+        setActionError({
+          testId: "collector-draft-error",
+          tone: "error",
+          text: DRAFT_SAVE_FAILED,
+        });
+      }
+      return false;
+    }
+    setNotice({
+      testId: "collector-draft-saved",
+      text: capturedSignedOut ? SAVED_SIGNED_OUT : SAVED_ON_PHONE,
+    });
+    await fixSaved(assignment.assignmentId);
+    return true;
+  }
+
+  // Shared checks before a handoff or failed pickup is sent or saved.
+  function captureVersion(assignment: Assignment): number | null {
+    if (openDraftFor(drafts, userId, assignment.assignmentId)) {
+      showValidation(
+        "A draft for this assignment is already saved on this phone. Open Drafts to change or discard it.",
+      );
+      return null;
+    }
+    const version = versionFor(assignment);
+    if (version === null) {
+      showValidation(MISSING_BATCH_VERSION);
+    }
+    return version;
+  }
+
+  async function capture(
+    assignment: Assignment,
+    expectedVersion: number,
+    captured: CapturedCommand,
+  ): Promise<boolean> {
+    beginCommand();
+    try {
+      return await saveOnPhone(assignment, expectedVersion, captured);
     } finally {
       setPending(false);
     }
   }
 
   async function onSelect(batch: Batch) {
+    if (offline) {
+      return;
+    }
     const { claimEpoch, collectorScopeId } = batch;
     if (!session || !claimEpoch || !collectorScopeId) {
       return;
@@ -221,16 +562,15 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
 
   async function onReject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (offline) {
+      return;
+    }
     if (!session || !active || !rejectionReason.trim()) {
       return;
     }
-    const matchVersion = batchMatchVersion(active.batchId);
+    const matchVersion = versionFor(active);
     if (matchVersion === null) {
-      setActionError({
-        testId: "collector-action-validation",
-        tone: "warning",
-        text: MISSING_BATCH_VERSION,
-      });
+      showValidation(MISSING_BATCH_VERSION);
       return;
     }
     await finish(async () => {
@@ -256,66 +596,84 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
     });
   }
 
+  function clearFailForm() {
+    setFailureReason("");
+    setObservedDetails("");
+  }
+
+  function clearHandoffForm() {
+    setPickupAt("");
+    setRepresentative("");
+    setActualCount("");
+    setVerificationHash("");
+    setHandoffNotes("");
+  }
+
   async function onFail(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!session || !active) {
+    if (!active || !(session || offlineUser)) {
       return;
     }
     if (!failureReason) {
-      setActionError({
-        testId: "collector-action-validation",
-        tone: "warning",
-        text: "Choose a failure reason.",
-      });
+      showValidation("Choose a failure reason.");
       return;
     }
-    const matchVersion = batchMatchVersion(active.batchId);
+    const matchVersion = captureVersion(active);
     if (matchVersion === null) {
-      setActionError({
-        testId: "collector-action-validation",
-        tone: "warning",
-        text: MISSING_BATCH_VERSION,
-      });
       return;
     }
-    await finish(async () => {
-      await reportFailedPickup(
-        session.tokens.accessToken,
+    const command: FailPickupCommand = { failureReason, observedDetails };
+    const captured: CapturedCommand = { command: "FAIL_PICKUP", payload: command };
+    if (offline || !session) {
+      if (await capture(active, matchVersion, captured)) {
+        clearFailForm();
+      }
+      return;
+    }
+    const key = failKey.keyFor(
+      JSON.stringify([
         active.assignmentId,
         matchVersion,
-        { failureReason, observedDetails },
-        failKey.keyFor(
-          JSON.stringify([
-            active.assignmentId,
-            matchVersion,
-            failureReason,
-            observedDetails.trim(),
-          ]),
-        ),
-      );
-      failKey.clear();
-      setNotice({
-        testId: "collector-failed",
-        text: `Pickup failed: ${FAILURE_REASON_LABELS[failureReason]}. The batch returns to APPROVED so another collector can select it.`,
-      });
-      setFailureReason("");
-      setObservedDetails("");
-    });
+        failureReason,
+        observedDetails.trim(),
+      ]),
+    );
+    await finish(
+      async () => {
+        await reportFailedPickup(
+          session.tokens.accessToken,
+          active.assignmentId,
+          matchVersion,
+          command,
+          key,
+        );
+        failKey.clear();
+        await fixSaved(active.assignmentId);
+        setNotice({
+          testId: "collector-failed",
+          text: `Pickup failed: ${FAILURE_REASON_LABELS[failureReason]}. The batch returns to APPROVED so another collector can select it.`,
+        });
+        clearFailForm();
+      },
+      async () => {
+        if (await saveOnPhone(active, matchVersion, captured, key)) {
+          failKey.clear();
+          clearFailForm();
+          syncNow();
+        }
+      },
+    );
   }
 
   async function onHandoff(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!session || !active) {
+    if (!active || !(session || offlineUser)) {
       return;
     }
     const pickupOccurredAt = toUtcIso(pickupAt);
     const actualItemCount = Number(actualCount);
     if (!pickupOccurredAt || !representative.trim()) {
-      setActionError({
-        testId: "collector-action-validation",
-        tone: "warning",
-        text: "Pickup time and the donor representative are required.",
-      });
+      showValidation("Pickup time and the donor representative are required.");
       return;
     }
     if (
@@ -323,61 +681,71 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
       actualItemCount < 1 ||
       actualItemCount > MAX_ACTUAL_ITEM_COUNT
     ) {
-      setActionError({
-        testId: "collector-action-validation",
-        tone: "warning",
-        text: `Actual item count must be a whole number from 1 to ${MAX_ACTUAL_ITEM_COUNT}.`,
-      });
+      showValidation(
+        `Actual item count must be a whole number from 1 to ${MAX_ACTUAL_ITEM_COUNT}.`,
+      );
       return;
     }
     if (!/^[0-9a-fA-F]{64}$/.test(verificationHash.trim())) {
-      setActionError({
-        testId: "collector-action-validation",
-        tone: "warning",
-        text: "Verification hash must be 64 hexadecimal characters.",
-      });
+      showValidation("Verification hash must be 64 hexadecimal characters.");
       return;
     }
-    const matchVersion = batchMatchVersion(active.batchId);
+    const matchVersion = captureVersion(active);
     if (matchVersion === null) {
-      setActionError({
-        testId: "collector-action-validation",
-        tone: "warning",
-        text: MISSING_BATCH_VERSION,
-      });
       return;
     }
-    const handoff = {
+    const handoff: HandoffCommand = {
       pickupOccurredAt,
       donorRepresentativeName: representative,
       actualItemCount,
       verificationHash,
       notes: handoffNotes,
     };
-    await finish(async () => {
-      const updated = await recordHandoff(
-        session.tokens.accessToken,
+    const captured: CapturedCommand = {
+      command: "RECORD_HANDOFF",
+      payload: handoff,
+    };
+    if (offline || !session) {
+      if (await capture(active, matchVersion, captured)) {
+        clearHandoffForm();
+      }
+      return;
+    }
+    const key = handoffKey.keyFor(
+      JSON.stringify([
         active.assignmentId,
         matchVersion,
-        handoff,
-        handoffKey.keyFor(
-          JSON.stringify([
-            active.assignmentId,
-            matchVersion,
-            pickupOccurredAt,
-            representative.trim(),
-            actualItemCount,
-            verificationHash.trim(),
-            handoffNotes.trim(),
-          ]),
-        ),
-      );
-      handoffKey.clear();
-      setNotice({
-        testId: "collector-handoff",
-        text: `Handoff recorded. Assignment status is ${updated.assignmentStatus}.`,
-      });
-    });
+        pickupOccurredAt,
+        representative.trim(),
+        actualItemCount,
+        verificationHash.trim(),
+        handoffNotes.trim(),
+      ]),
+    );
+    await finish(
+      async () => {
+        const updated = await recordHandoff(
+          session.tokens.accessToken,
+          active.assignmentId,
+          matchVersion,
+          handoff,
+          key,
+        );
+        handoffKey.clear();
+        await fixSaved(active.assignmentId);
+        setNotice({
+          testId: "collector-handoff",
+          text: `Handoff recorded. Assignment status is ${updated.assignmentStatus}.`,
+        });
+      },
+      async () => {
+        if (await saveOnPhone(active, matchVersion, captured, key)) {
+          handoffKey.clear();
+          clearHandoffForm();
+          syncNow();
+        }
+      },
+    );
   }
 
   const visibleAssignments = (assignments ?? []).filter((row) =>
@@ -416,10 +784,31 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
           Loading collector work…
         </LoadingLine>
       ) : null}
+      {offline && savedAt ? (
+        <p
+          data-testid="collector-saved-at"
+          className="mb-3 text-sm text-slate-600"
+        >
+          Saved on this device {formatWhen(savedAt)}.
+        </p>
+      ) : null}
       {loadBanner ? (
         <Banner testId={loadBanner.testId} tone={loadBanner.tone}>
           {loadBanner.text}
         </Banner>
+      ) : null}
+      {fixing && !history ? (
+        <div className="mb-3">
+          <Banner testId="collector-fix" tone="warning">
+            {commandLabel(fixing)} draft for batch {fixing.batchId} was
+            refused: {fixing.failure?.message || "the data was refused."}{" "}
+            Correct the details below and submit again; it goes as a new
+            command with a new key.
+            {assignments && !active
+              ? " This assignment is no longer in your accepted list."
+              : ""}
+          </Banner>
+        </div>
       ) : null}
       {notice ? (
         <Banner testId={notice.testId} tone="success">
@@ -431,18 +820,29 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
           <Banner testId={actionError.testId} tone={actionError.tone}>
             {actionError.text}
           </Banner>
-          <button
-            type="button"
-            data-testid="collector-retry"
-            className="mt-2 text-sm font-medium text-teal-800"
-            onClick={() => void reload()}
-          >
-            Refresh and retry
-          </button>
+          {offline ? null : (
+            <button
+              type="button"
+              data-testid="collector-retry"
+              className="mt-2 text-sm font-medium text-teal-800"
+              onClick={() => void reload()}
+            >
+              Refresh and retry
+            </button>
+          )}
         </div>
       ) : null}
 
-      {!history && available && available.length === 0 && !loadError ? (
+      {!history && offline && available ? (
+        <div data-testid="collector-available-offline" className="mt-3">
+          <OfflineRequired action="Select a batch" />
+        </div>
+      ) : null}
+      {!history &&
+      !offline &&
+      available &&
+      available.length === 0 &&
+      !loadError ? (
         <Banner testId="collector-available-empty" tone="info">
           No APPROVED batches are available for your scope.
         </Banner>
@@ -493,7 +893,18 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
         </table>
       ) : null}
 
-      {assignments && visibleAssignments.length === 0 && !loadError ? (
+      {offline && assignments && assignments.length === 0 ? (
+        <div className="mt-3">
+          <Banner testId="collector-saved-empty" tone="info">
+            No assignments are saved on this device. Open Assignments while
+            online to save them.
+          </Banner>
+        </div>
+      ) : null}
+      {assignments &&
+      visibleAssignments.length === 0 &&
+      !loadError &&
+      !(offline && assignments.length === 0) ? (
         <Banner testId="collector-assignments-empty" tone="info">
           {history
             ? "No completed or failed assignments yet."
@@ -536,25 +947,40 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
       ) : null}
       {!history && visibleAssignments.length > 0 ? (
         <ul className="mt-4 divide-y divide-slate-200 border-y border-slate-200 text-sm">
-          {visibleAssignments.map((row) => (
-            <li
-              key={row.assignmentId}
-              className="flex items-center justify-between gap-4 py-3"
-            >
-              <span className="min-w-0 break-all">
-                {row.batchId} · {row.assignmentStatus} ·{" "}
-                {formatWhen(row.updatedAt)}
-              </span>
-              <button
-                type="button"
-                data-testid={`collector-open-${row.assignmentId}`}
-                className="shrink-0 font-medium text-teal-800"
-                onClick={() => setSelectedAssignment(row.assignmentId)}
+          {visibleAssignments.map((row) => {
+            const draft = openDraftFor(drafts, userId, row.assignmentId);
+            return (
+              <li
+                key={row.assignmentId}
+                className="flex items-center justify-between gap-4 py-3"
               >
-                Open
-              </button>
-            </li>
-          ))}
+                <span className="min-w-0 break-all">
+                  {row.batchId} · {row.assignmentStatus} ·{" "}
+                  {formatWhen(row.updatedAt)}
+                  {draft ? (
+                    <span
+                      data-testid={`collector-draft-${row.assignmentId}`}
+                      className="mt-1 flex flex-wrap items-center gap-2 text-slate-600"
+                    >
+                      {commandLabel(draft)} saved on this phone
+                      <StateChip
+                        state={draft.state}
+                        testId={`collector-draft-state-${row.assignmentId}`}
+                      />
+                    </span>
+                  ) : null}
+                </span>
+                <button
+                  type="button"
+                  data-testid={`collector-open-${row.assignmentId}`}
+                  className="shrink-0 font-medium text-teal-800"
+                  onClick={() => setSelectedAssignment(row.assignmentId)}
+                >
+                  Open
+                </button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 
@@ -567,27 +993,45 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
             Assignment {active.assignmentId} is {active.assignmentStatus}.
             Selection already accepts the assignment.
           </p>
-          <form
-            onSubmit={(event) => void onReject(event)}
-            className="grid gap-2"
-          >
-            <h3 className="font-semibold text-slate-900">Reject</h3>
-            <input
-              data-testid="collector-rejection-reason"
-              value={rejectionReason}
-              onChange={(event) => setRejectionReason(event.target.value)}
-              placeholder="Rejection reason"
-              className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <button
-              type="submit"
-              data-testid="collector-reject"
-              disabled={pending}
-              className="w-fit text-sm font-medium text-teal-800"
+          {activeDraft ? (
+            <p
+              data-testid="collector-open-draft"
+              className="flex flex-wrap items-center gap-2 text-sm text-slate-700"
             >
-              Reject assignment
-            </button>
-          </form>
+              {commandLabel(activeDraft)} is saved on this phone.
+              <StateChip state={activeDraft.state} />
+              Failed pickup and handoff stay closed until it is sent or
+              discarded in Drafts.
+            </p>
+          ) : null}
+          {offline ? (
+            <div className="grid gap-2">
+              <h3 className="font-semibold text-slate-900">Reject</h3>
+              <OfflineRequired action="Reject assignment" />
+            </div>
+          ) : (
+            <form
+              onSubmit={(event) => void onReject(event)}
+              className="grid gap-2"
+            >
+              <h3 className="font-semibold text-slate-900">Reject</h3>
+              <input
+                data-testid="collector-rejection-reason"
+                value={rejectionReason}
+                onChange={(event) => setRejectionReason(event.target.value)}
+                placeholder="Rejection reason"
+                className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
+              />
+              <button
+                type="submit"
+                data-testid="collector-reject"
+                disabled={pending}
+                className="w-fit text-sm font-medium text-teal-800"
+              >
+                Reject assignment
+              </button>
+            </form>
+          )}
           <form onSubmit={(event) => void onFail(event)} className="grid gap-2">
             <h3 className="font-semibold text-slate-900">Failed pickup</h3>
             <select
@@ -616,8 +1060,8 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
             <button
               type="submit"
               data-testid="collector-fail"
-              disabled={pending}
-              className="w-fit text-sm font-medium text-teal-800"
+              disabled={pending || Boolean(activeDraft)}
+              className="w-fit text-sm font-medium text-teal-800 disabled:opacity-50"
             >
               Report failed pickup
             </button>
@@ -669,7 +1113,7 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
             <button
               type="submit"
               data-testid="collector-handoff-submit"
-              disabled={pending}
+              disabled={pending || Boolean(activeDraft)}
               className="w-fit rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
               Record handoff

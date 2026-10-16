@@ -387,6 +387,44 @@ export async function rejectAssignment(
   );
 }
 
+export type HandoffWire = {
+  pickup_occurred_at: string;
+  donor_representative_name: string;
+  actual_item_count: number;
+  verification_hash: string;
+  notes?: string;
+};
+
+/** Request body for POST /assignments/{id}/handoff (also sent by offline drafts). */
+export function handoffBody(command: HandoffCommand): HandoffWire {
+  const body: HandoffWire = {
+    pickup_occurred_at: command.pickupOccurredAt,
+    donor_representative_name: command.donorRepresentativeName.trim(),
+    actual_item_count: command.actualItemCount,
+    verification_hash: command.verificationHash.trim(),
+  };
+  const notes = command.notes?.trim();
+  if (notes) {
+    body.notes = notes;
+  }
+  return body;
+}
+
+export type FailPickupWire = {
+  failure_reason: FailureReason;
+  observed_details?: string;
+};
+
+/** Request body for POST /assignments/{id}/fail (also sent by offline drafts). */
+export function failPickupBody(command: FailPickupCommand): FailPickupWire {
+  const body: FailPickupWire = { failure_reason: command.failureReason };
+  const observedDetails = command.observedDetails?.trim();
+  if (observedDetails) {
+    body.observed_details = observedDetails;
+  }
+  return body;
+}
+
 export async function recordHandoff(
   accessToken: string,
   assignmentId: string,
@@ -397,26 +435,10 @@ export async function recordHandoff(
   if (USE_LOCAL_COLLECTOR_MOCK) {
     return mockRecordHandoff(assignmentId, version);
   }
-  const body: {
-    pickup_occurred_at: string;
-    donor_representative_name: string;
-    actual_item_count: number;
-    verification_hash: string;
-    notes?: string;
-  } = {
-    pickup_occurred_at: command.pickupOccurredAt,
-    donor_representative_name: command.donorRepresentativeName.trim(),
-    actual_item_count: command.actualItemCount,
-    verification_hash: command.verificationHash.trim(),
-  };
-  const notes = command.notes?.trim();
-  if (notes) {
-    body.notes = notes;
-  }
   return call(
     api.post(
       `/api/v1/assignments/${assignmentId}/handoff`,
-      body,
+      handoffBody(command),
       commandHeaders(accessToken, idempotencyKey, version),
     ),
     (data) => parseData(data, parseAssignment, "Assignment"),
@@ -433,20 +455,10 @@ export async function reportFailedPickup(
   if (USE_LOCAL_COLLECTOR_MOCK) {
     return mockReportFailedPickup(assignmentId, version);
   }
-  const body: {
-    failure_reason: FailureReason;
-    observed_details?: string;
-  } = {
-    failure_reason: command.failureReason,
-  };
-  const observedDetails = command.observedDetails?.trim();
-  if (observedDetails) {
-    body.observed_details = observedDetails;
-  }
   return call(
     api.post(
       `/api/v1/assignments/${assignmentId}/fail`,
-      body,
+      failPickupBody(command),
       commandHeaders(accessToken, idempotencyKey, version),
     ),
     (data) => parseData(data, parseAssignment, "Assignment"),

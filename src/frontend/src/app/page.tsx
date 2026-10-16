@@ -7,14 +7,15 @@ import { replaceLocation } from "@/lib/auth/storage";
 import { useEffect } from "react";
 
 export default function IndexPage() {
-  const { session, ready } = useSession();
+  const { session, ready, offlineUser } = useSession();
+  const signedIn = Boolean(session || offlineUser);
 
   useEffect(() => {
     if (!ready) {
       return;
     }
-    replaceLocation(session ? HOME_PATH : LOGIN_PATH);
-  }, [ready, session]);
+    replaceLocation(signedIn ? HOME_PATH : LOGIN_PATH);
+  }, [ready, signedIn]);
 
   return <Redirecting />;
 }

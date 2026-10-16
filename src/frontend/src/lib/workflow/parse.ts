@@ -212,6 +212,8 @@ export function parseAssignment(value: unknown): Assignment {
   if (collectorScopeId) assignment.collectorScopeId = collectorScopeId;
   if (createdAt) assignment.createdAt = createdAt;
   if (updatedAt) assignment.updatedAt = updatedAt;
+  const batchVersion = readNumber(value, "batch_version");
+  if (batchVersion !== undefined) assignment.batchVersion = batchVersion;
   return assignment;
 }
 

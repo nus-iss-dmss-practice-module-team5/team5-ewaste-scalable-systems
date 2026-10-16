@@ -11,6 +11,10 @@ ARG NEXT_PUBLIC_USE_MOCK_AUTH=false
 ARG API_PROXY_TARGET
 ARG NEXT_PUBLIC_API_BASE_URL
 ARG NEXT_PUBLIC_API_URL
+# Service worker cache version (see next.config.ts). Pass the commit sha in CI;
+# without it the build falls back to a timestamp because .git is not copied.
+ARG BUILD_ID
+ENV BUILD_ID=$BUILD_ID
 ENV NEXT_PUBLIC_USE_MOCK_AUTH=$NEXT_PUBLIC_USE_MOCK_AUTH
 ENV API_PROXY_TARGET=$API_PROXY_TARGET
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL

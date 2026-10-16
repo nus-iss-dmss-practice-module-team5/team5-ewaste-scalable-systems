@@ -100,6 +100,9 @@ export type Assignment = {
   collectorScopeId?: string;
   createdAt?: string;
   updatedAt?: string;
+  // The batch version for If-Match-Version, once the API returns it
+  // (EWSS-21). Until then the collector view keeps it per browser session.
+  batchVersion?: number;
 };
 
 export type ClaimCommand = {
