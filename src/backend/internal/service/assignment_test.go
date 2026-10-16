@@ -23,6 +23,7 @@ type fakeAssignmentRepository struct {
 	actions     []*model.AssignmentAction
 	audits      []*model.BatchAuditEvent
 	outbox      []*model.EventOutbox
+	collectors  []repository.CollectorCandidate
 }
 
 func newFakeAssignmentRepository() *fakeAssignmentRepository {
@@ -31,7 +32,11 @@ func newFakeAssignmentRepository() *fakeAssignmentRepository {
 		claim:       &model.BatchClaim{ID: "claim-1", BatchID: "batch-1", ClaimEpoch: 1, RecyclerOrgID: "REC-001", ClaimStatus: model.ClaimStatusAccepted},
 		reservation: &model.CapacityReservation{ID: "reservation-1", BatchID: "batch-1", ClaimID: "claim-1", Status: model.CapacityReservationStatusReserved},
 		scope:       &model.RecyclerCollectorScope{ID: "scope-1", RecyclerOrgID: "REC-001", CollectorOrgID: "COL-001", Zone: "NORTH", IsActive: true},
-		commands:    make(map[string]*model.CommandIdempotency),
+		collectors: []repository.CollectorCandidate{
+			{UserID: "USR-001", OrganisationID: "COL-001", ScopeID: "d0000000-0000-4000-8000-000000000001", ScopeVersion: 1},
+			{UserID: "USR-002", OrganisationID: "COL-002", ScopeID: "d0000000-0000-4000-8000-000000000002", ScopeVersion: 1},
+		},
+		commands: make(map[string]*model.CommandIdempotency),
 	}
 }
 
@@ -85,11 +90,38 @@ func (t *fakeAssignmentTransaction) FindAcceptedClaimReservation(context.Context
 func (t *fakeAssignmentTransaction) FindCollectorScope(context.Context, string, string, string, string, time.Time) (*model.RecyclerCollectorScope, error) {
 	return t.repo.scope, nil
 }
+func (t *fakeAssignmentTransaction) FindMostRecentCollector(context.Context, string, string) (*repository.CollectorCandidate, error) {
+	return nil, nil
+}
+func (t *fakeAssignmentTransaction) FindNextActiveCollector(_ context.Context, _ string, _ string, after *repository.CollectorCandidate, excludeUserID string, _ time.Time) (*repository.CollectorCandidate, error) {
+	for index := range t.repo.collectors {
+		candidate := &t.repo.collectors[index]
+		if candidate.UserID == excludeUserID {
+			continue
+		}
+		if after == nil || candidate.OrganisationID > after.OrganisationID || (candidate.OrganisationID == after.OrganisationID && candidate.UserID > after.UserID) {
+			return candidate, nil
+		}
+	}
+	for index := range t.repo.collectors {
+		candidate := &t.repo.collectors[index]
+		if candidate.UserID != excludeUserID {
+			return candidate, nil
+		}
+	}
+	return nil, repository.ErrAssignmentNoActiveCollector
+}
 func (t *fakeAssignmentTransaction) FindLatestAssignment(context.Context, string) (*model.BatchAssignment, error) {
 	if t.repo.assignment == nil {
 		return nil, repository.ErrAssignmentNotFound
 	}
 	return t.repo.assignment, nil
+}
+func (t *fakeAssignmentTransaction) FindAssignmentBatchID(context.Context, string) (string, error) {
+	if t.repo.assignment == nil {
+		return "", repository.ErrAssignmentNotFound
+	}
+	return t.repo.assignment.BatchID, nil
 }
 func (t *fakeAssignmentTransaction) FindAssignmentForUpdate(context.Context, string) (*model.BatchAssignment, error) {
 	if t.repo.assignment == nil {
@@ -176,6 +208,37 @@ func TestAssignmentRejectsForbiddenAndInvalidRequests(t *testing.T) {
 	}
 }
 
+func TestRejectAutomaticallyAssignsTheNextCollector(t *testing.T) {
+	repo := newFakeAssignmentRepository()
+	service := NewAssignmentWorkflowService(repo)
+	ids := []string{"assignment-1", "action-1", "event-1", "action-2", "replacement-2", "event-2"}
+	service.newID = func() string {
+		id := ids[0]
+		ids = ids[1:]
+		return id
+	}
+	selected, err := service.Select(context.Background(), "batch-1", dto.AssignmentSelectionRequest{ExpectedVersion: 1, ClaimEpoch: "1", CollectorScopeID: "scope-1"}, testAssignmentMetadata("selection-key-0001"))
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	previous := repo.assignment
+	metadata := testAssignmentMetadata("reject-command-key-01")
+	metadata.ExpectedVersion = 2
+	result, err := service.Reject(context.Background(), selected.Data.AssignmentID, dto.RejectAssignmentRequest{RejectionReason: "route unavailable"}, metadata)
+	if err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if result.Data.AssignmentID != previous.ID || previous.AssignmentStatus != model.AssignmentStatusSuperseded || repo.batch.Status != model.BatchStatusAssigned || repo.batch.Version != 4 {
+		t.Fatalf("reject did not close and replace the assignment: result=%+v previous=%+v batch=%+v", result, previous, repo.batch)
+	}
+	if repo.assignment.ID != "replacement-2" || repo.assignment.CollectorUserID != "USR-002" || repo.assignment.AssignmentStatus != model.AssignmentStatusPending || repo.assignment.AssignmentSequence != 2 || repo.assignment.PreviousAssignmentID == nil || *repo.assignment.PreviousAssignmentID != previous.ID {
+		t.Fatalf("replacement assignment is not the next collector: %+v", repo.assignment)
+	}
+	if len(repo.outbox) != 2 || repo.outbox[1].EventType != model.CollectorAssignedEventType || repo.outbox[1].SequenceInCommand != 1 {
+		t.Fatalf("replacement CollectorAssigned event missing: %+v", repo.outbox)
+	}
+}
+
 func TestAssignmentHandoffCompletesBatchAndEmitsEvent(t *testing.T) {
 	repo := newFakeAssignmentRepository()
 	service := NewAssignmentWorkflowService(repo)
@@ -218,5 +281,69 @@ func TestHandoffValidationRequiresDesignBounds(t *testing.T) {
 	future := time.Now().UTC().Add(time.Minute)
 	if err := validateHandoff(dto.HandoffRequest{PickupOccurredAt: future, DonorRepresentativeName: "rep", ActualItemCount: 1, VerificationHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, time.Now().UTC()); !errors.Is(err, ErrAssignmentValidation) {
 		t.Fatalf("expected future handoff to be rejected, got %v", err)
+	}
+}
+
+func TestOfflineAssignmentMutationsRejectStaleVersionWithCurrentState(t *testing.T) {
+	repo := newFakeAssignmentRepository()
+	workflow := NewAssignmentWorkflowService(repo)
+	now := time.Date(2026, time.January, 1, 10, 0, 0, 0, time.UTC)
+	workflow.clock = func() time.Time { return now }
+	workflow.newID = func() string { return "generated-id" }
+
+	selection, err := workflow.Select(context.Background(), "batch-1", dto.AssignmentSelectionRequest{
+		ExpectedVersion: 1, ClaimEpoch: "1", CollectorScopeID: "scope-1",
+	}, testAssignmentMetadata("selection-key-0001"))
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if repo.batch.Version != 2 || repo.assignment == nil {
+		t.Fatalf("selection did not establish current assignment state: batch=%+v assignment=%+v", repo.batch, repo.assignment)
+	}
+
+	staleMetadata := testAssignmentMetadata("stale-command-key-01")
+	staleMetadata.ExpectedVersion = 1
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{"accept", func() error {
+			_, err := workflow.Accept(context.Background(), selection.Data.AssignmentID, staleMetadata)
+			return err
+		}},
+		{"handoff", func() error {
+			_, err := workflow.Handoff(context.Background(), selection.Data.AssignmentID, dto.HandoffRequest{
+				PickupOccurredAt: now, DonorRepresentativeName: "Donor representative", ActualItemCount: 1,
+				VerificationHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			}, staleMetadata)
+			return err
+		}},
+		{"failed pickup", func() error {
+			_, err := workflow.Fail(context.Background(), selection.Data.AssignmentID, dto.FailedPickupRequest{FailureReason: "DONOR_UNAVAILABLE"}, staleMetadata)
+			return err
+		}},
+	}
+
+	commands, actions, outbox := len(repo.commands), len(repo.actions), len(repo.outbox)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.run()
+			if !errors.Is(err, ErrAssignmentStaleVersion) {
+				t.Fatalf("expected stale version, got %v", err)
+			}
+			current, ok := AssignmentCurrentStateFromError(err)
+			if !ok {
+				t.Fatal("expected current state on stale version")
+			}
+			if current.AssignmentID != selection.Data.AssignmentID || current.AssignmentStatus != model.AssignmentStatusAccepted || current.AssignmentVersion != 1 || current.BatchID != "batch-1" || current.BatchStatus != string(model.BatchStatusAssigned) || current.BatchVersion != 2 {
+				t.Fatalf("unexpected stale current state: %+v", current)
+			}
+			if current.CurrentAssignmentID == nil || *current.CurrentAssignmentID != selection.Data.AssignmentID {
+				t.Fatalf("current assignment pointer missing: %+v", current)
+			}
+			if len(repo.commands) != commands || len(repo.handoffs) != 0 || len(repo.actions) != actions || len(repo.outbox) != outbox {
+				t.Fatalf("stale %s changed durable state: commands=%d handoffs=%d actions=%d outbox=%d", tt.name, len(repo.commands), len(repo.handoffs), len(repo.actions), len(repo.outbox))
+			}
+		})
 	}
 }

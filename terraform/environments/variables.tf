@@ -28,7 +28,7 @@ variable "shared_rg_name" {
 
 variable "shared_acr_name" {
   type        = string
-  default     = "acrewasteplatform"
+  default     = "acrewastescale"
   description = "Name of the shared Azure Container Registry."
 }
 
@@ -50,10 +50,13 @@ variable "db_admin_password" {
   description = "Administrator password for MySQL Flexible Server."
 }
 
+# ============================================================================
+# CONTAINER IMAGES (DECOUPLED MICROSERVICES)
+# ============================================================================
 variable "image_digest" {
   type        = string
   default     = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
-  description = "Immutable API/workflow image digest from ACR, or initial bootstrap image."
+  description = "Default/fallback image digest from ACR, or initial bootstrap image."
 }
 
 variable "ui_image_digest" {
@@ -62,10 +65,55 @@ variable "ui_image_digest" {
   description = "Immutable Next.js frontend image digest from ACR, or initial bootstrap image."
 }
 
+variable "auth_image_digest" {
+  type        = string
+  default     = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+  description = "Immutable identity-access-svc image digest from ACR, or bootstrap placeholder."
+}
+
+variable "batch_image_digest" {
+  type        = string
+  default     = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+  description = "Immutable batch-workflow-svc image digest from ACR, or bootstrap placeholder."
+}
+
+variable "claim_image_digest" {
+  type        = string
+  default     = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+  description = "Immutable claim-logistics-svc image digest from ACR, or bootstrap placeholder."
+}
+
+variable "custody_image_digest" {
+  type        = string
+  default     = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+  description = "Immutable custody-verification-svc image digest from ACR, or bootstrap placeholder."
+}
+
+variable "matching_image_digest" {
+  type        = string
+  default     = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+  description = "Immutable matching-worker-svc image digest from ACR, or bootstrap placeholder."
+}
+
 variable "analytics_image_digest" {
   type        = string
   default     = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
-  description = "Immutable Python analytics image digest from ACR, or initial bootstrap image."
+  description = "Immutable analytics-worker-svc image digest from ACR, or bootstrap placeholder."
+}
+
+# ============================================================================
+# REPLICA OVERRIDES (SUPPORTING CAPACITY SCALE RUNS)
+# ============================================================================
+variable "batch_min_replicas" {
+  type        = number
+  default     = 1
+  description = "Minimum replicas for batch-workflow-svc (lock to 3 for R2 scaling run)."
+}
+
+variable "batch_max_replicas" {
+  type        = number
+  default     = 3
+  description = "Maximum replicas for batch-workflow-svc (lock to 1 for R1 capacity screen)."
 }
 
 variable "auth_access_secret" {
@@ -110,7 +158,7 @@ variable "analytics_service_token" {
 
 variable "github_repository" {
   type        = string
-  default     = "nus-iss-dmss-practice-module-team5/team5-ewaste-platform"
+  default     = "nus-iss-dmss-practice-module-team5/team5-ewaste-scalable-systems"
   description = "Target GitHub repository in 'owner/repo' format for self-hosted runner registration."
 }
 

@@ -7,6 +7,7 @@ import { CollectorWork } from "./collector-work";
 
 const listBatches = vi.fn();
 const listAssignments = vi.fn();
+const acceptAssignment = vi.fn();
 const selectAssignment = vi.fn();
 const rejectAssignment = vi.fn();
 const recordHandoff = vi.fn();
@@ -24,6 +25,7 @@ vi.mock("@/lib/auth/session-context", () => ({
 vi.mock("@/lib/workflow/api", () => ({
   listBatches: (...args: unknown[]) => listBatches(...args),
   listAssignments: (...args: unknown[]) => listAssignments(...args),
+  acceptAssignment: (...args: unknown[]) => acceptAssignment(...args),
   selectAssignment: (...args: unknown[]) => selectAssignment(...args),
   rejectAssignment: (...args: unknown[]) => rejectAssignment(...args),
   recordHandoff: (...args: unknown[]) => recordHandoff(...args),
@@ -63,6 +65,7 @@ describe("collector work", () => {
   beforeEach(() => {
     listBatches.mockReset();
     listAssignments.mockReset();
+    acceptAssignment.mockReset();
     selectAssignment.mockReset();
     rejectAssignment.mockReset();
     recordHandoff.mockReset();
@@ -72,6 +75,79 @@ describe("collector work", () => {
     listBatches.mockResolvedValue(page([approved]));
     listAssignments.mockResolvedValue(page([accepted]));
     sessionStorage.clear();
+  });
+
+  it("accepts an automatic pending assignment using its batch version", async () => {
+    const user = userEvent.setup();
+    listBatches.mockResolvedValue(page([]));
+    listAssignments.mockResolvedValue(
+      page([{ ...accepted, assignmentStatus: "PENDING", batchVersion: 7 }]),
+    );
+    acceptAssignment.mockImplementation(async () => {
+      listAssignments.mockResolvedValue(
+        page([{ ...accepted, version: 2, batchVersion: 8 }]),
+      );
+      return { ...accepted, version: 2 };
+    });
+    render(<CollectorWork />);
+    await user.click(await screen.findByTestId("collector-open-asg-1"));
+    expect(
+      screen.queryByTestId("collector-handoff-submit"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("collector-fail")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("collector-accept"));
+    await screen.findByTestId("collector-handoff-submit");
+    expect(acceptAssignment).toHaveBeenCalledWith(
+      "access-token",
+      "asg-1",
+      7,
+      "idem-collector",
+    );
+    reportFailedPickup.mockResolvedValue({
+      ...accepted,
+      assignmentStatus: "FAILED",
+    });
+    await user.selectOptions(
+      screen.getByTestId("collector-failure-reason"),
+      "DONOR_UNAVAILABLE",
+    );
+    await user.click(screen.getByTestId("collector-fail"));
+    await waitFor(() =>
+      expect(reportFailedPickup).toHaveBeenCalledWith(
+        "access-token",
+        "asg-1",
+        8,
+        { failureReason: "DONOR_UNAVAILABLE", observedDetails: "" },
+        "idem-collector",
+      ),
+    );
+    expect(selectAssignment).not.toHaveBeenCalled();
+  });
+
+  it("retains the server conflict state without resending the stale command", async () => {
+    const user = userEvent.setup();
+    listBatches.mockResolvedValue(page([]));
+    listAssignments.mockResolvedValue(
+      page([{ ...accepted, assignmentStatus: "PENDING", batchVersion: 7 }]),
+    );
+    acceptAssignment.mockRejectedValue(
+      new WorkflowError("changed", "conflict", "STALE_VERSION", "c", 409, {
+        assignmentId: "asg-2",
+        assignmentStatus: "PENDING",
+        assignmentVersion: 1,
+        batchId: "batch-1",
+        batchStatus: "ASSIGNED",
+        batchVersion: 9,
+        currentAssignmentId: "asg-2",
+      }),
+    );
+    render(<CollectorWork />);
+    await user.click(await screen.findByTestId("collector-open-asg-1"));
+    await user.click(screen.getByTestId("collector-accept"));
+    expect(
+      await screen.findByTestId("collector-action-conflict"),
+    ).toHaveTextContent("assignment PENDING and batch ASSIGNED");
+    expect(acceptAssignment).toHaveBeenCalledTimes(1);
   });
 
   it("selects an approved batch into an accepted assignment", async () => {
@@ -183,7 +259,7 @@ describe("collector work", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("explains that a failed pickup returns the batch to APPROVED", async () => {
+  it("explains replacement after a failed pickup", async () => {
     const user = userEvent.setup();
     reportFailedPickup.mockResolvedValue({
       ...accepted,
@@ -202,7 +278,7 @@ describe("collector work", () => {
     );
     await user.click(screen.getByTestId("collector-fail"));
     expect(await screen.findByTestId("collector-failed")).toHaveTextContent(
-      "Donor unavailable. The batch returns to APPROVED",
+      "Donor unavailable. The next eligible collector is assigned when available.",
     );
     expect(reportFailedPickup).toHaveBeenCalledWith(
       "access-token",
@@ -289,7 +365,7 @@ describe("collector work", () => {
     await fillHandoff(user, "4");
     expect(
       await screen.findByTestId("collector-action-validation"),
-    ).toHaveTextContent("no batch version from selection");
+    ).toHaveTextContent("no batch version");
     expect(recordHandoff).not.toHaveBeenCalled();
   });
 
@@ -348,14 +424,14 @@ describe("collector work", () => {
     expect(recordHandoff).not.toHaveBeenCalled();
   });
 
-  it("shows failed history as approved for another collector", async () => {
+  it("shows replacement information for failed history", async () => {
     listAssignments.mockResolvedValue(
       page([{ ...accepted, assignmentStatus: "FAILED" }]),
     );
     render(<CollectorWork history />);
     expect(
       await screen.findByTestId("collector-reassignment-asg-1"),
-    ).toHaveTextContent("APPROVED again");
+    ).toHaveTextContent("replacement collector");
   });
 
   it("shows a forbidden state for another collector scope", async () => {

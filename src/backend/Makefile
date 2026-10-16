@@ -3,7 +3,7 @@ COMPOSE_ENV_FILE ?= $(CURDIR)/.env
 
 COMPOSE = docker compose -f $(COMPOSE_FILE) --env-file $(COMPOSE_ENV_FILE)
 
-.PHONY: test vet build check test-dependencies run-test docker-build docker-run docker-stop \
+.PHONY: test vet build build-services check test-dependencies run-test docker-build docker-build-services docker-run docker-stop \
 	compose-config compose-build compose-up compose-down compose-destroy-test compose-reset-test \
 	compose-restart compose-ps compose-logs compose-seed-users dummy_precommit
 
@@ -19,6 +19,9 @@ vet:
 build:
 	go build ./cmd/server
 
+build-services:
+	go build ./cmd/identity-access ./cmd/batch-workflow ./cmd/claim-logistics ./cmd/custody-verification
+
 check: test vet build
 
 test-dependencies:
@@ -29,6 +32,12 @@ run-test:
 
 docker-build:
 	docker build -t ewaste-workflow-api:test .
+
+docker-build-services:
+	docker build --build-arg SERVICE=identity-access -t ewaste-identity-access-svc:test .
+	docker build --build-arg SERVICE=batch-workflow -t ewaste-batch-workflow-svc:test .
+	docker build --build-arg SERVICE=claim-logistics -t ewaste-claim-logistics-svc:test .
+	docker build --build-arg SERVICE=custody-verification -t ewaste-custody-verification-svc:test .
 
 docker-run: docker-build
 	docker run -d --name ewaste-api-test -p 8080:8080 ewaste-workflow-api:test

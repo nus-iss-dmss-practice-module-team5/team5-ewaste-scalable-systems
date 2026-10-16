@@ -11,6 +11,7 @@ import {
   getImpact,
   getOpportunity,
   getProcessingBatch,
+  listAssignments,
   listBatches,
   listOpportunities,
   listProcessingBatches,
@@ -254,6 +255,88 @@ describe("workflow api", () => {
         },
       },
     );
+  });
+
+  it("accepts the automatic ASSIGNED claim result", async () => {
+    post.mockResolvedValue({
+      data: {
+        data: {
+          batch_id: "batch-1",
+          status: "ASSIGNED",
+          version: 5,
+          claim_epoch: "1",
+          claim_id: "claim-1",
+          reservation_id: "res-1",
+          assignment_id: "asg-1",
+          correlation_id: "corr-claim",
+        },
+      },
+    });
+    const result = await claimOpportunity(
+      "token",
+      "batch-1",
+      { expectedVersion: 3, claimEpoch: "1" },
+      "idem-claim",
+    );
+    expect(result.status).toBe("ASSIGNED");
+    expect(result.version).toBe(5);
+  });
+
+  it("keeps assignment and batch versions separate on reads", async () => {
+    get.mockResolvedValue({
+      data: {
+        data: [
+          {
+            assignment_id: "asg-1",
+            batch_id: "batch-1",
+            assignment_status: "PENDING",
+            assignment_sequence: 1,
+            version: 1,
+            batch_version: 7,
+          },
+        ],
+        page: 1,
+        page_size: 20,
+        total_count: 1,
+        correlation_id: "c",
+      },
+    });
+    const result = await listAssignments("token");
+    expect(result.data[0]).toMatchObject({
+      version: 1,
+      batchVersion: 7,
+      assignmentStatus: "PENDING",
+    });
+  });
+
+  it("preserves current_state from a stale assignment response", async () => {
+    post.mockRejectedValue(
+      axiosError(409, {
+        code: "STALE_VERSION",
+        message: "changed",
+        correlation_id: "c",
+        current_state: {
+          assignment_id: "asg-2",
+          assignment_status: "PENDING",
+          assignment_version: 1,
+          batch_id: "batch-1",
+          batch_status: "ASSIGNED",
+          batch_version: 9,
+          current_assignment_id: "asg-2",
+        },
+      }),
+    );
+    await expect(
+      rejectAssignment("token", "asg-1", 7, "unavailable", "idem-reject"),
+    ).rejects.toMatchObject({
+      code: "STALE_VERSION",
+      currentState: {
+        assignmentId: "asg-2",
+        batchVersion: 9,
+        currentAssignmentId: "asg-2",
+      },
+    });
+    expect(post).toHaveBeenCalledTimes(1);
   });
 
   it("selects an assignment with the collector scope", async () => {

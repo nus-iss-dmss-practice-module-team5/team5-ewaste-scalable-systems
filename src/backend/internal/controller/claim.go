@@ -137,7 +137,8 @@ func mapClaimError(err error) apierror.Code {
 	case errors.Is(err, service.ErrClaimConcurrent),
 		errors.Is(err, service.ErrClaimInvalidState),
 		errors.Is(err, service.ErrClaimInProgress),
-		errors.Is(err, service.ErrClaimCapacity):
+		errors.Is(err, service.ErrClaimCapacity),
+		errors.Is(err, service.ErrClaimNoActiveCollector):
 		return apierror.Conflict
 	case errors.Is(err, service.ErrClaimLeaseUnavailable):
 		return apierror.ServiceUnavailable

@@ -238,11 +238,7 @@ func (s *AssignmentWorkflowService) changeAssignment(ctx context.Context, assign
 			result = *replay
 			return nil
 		}
-		assignment, err := tx.FindAssignmentForUpdate(ctx, assignmentID)
-		if err != nil {
-			return err
-		}
-		batch, err := tx.FindBatchForUpdate(ctx, assignment.BatchID)
+		assignment, batch, err := lockAssignmentBatch(ctx, tx, assignmentID)
 		if err != nil {
 			return err
 		}
@@ -250,7 +246,7 @@ func (s *AssignmentWorkflowService) changeAssignment(ctx context.Context, assign
 			return ErrAssignmentForbidden
 		}
 		if batch.Version != uint32(metadata.ExpectedVersion) || batch.CurrentAssignmentID == nil || *batch.CurrentAssignmentID != assignment.ID {
-			return ErrAssignmentStaleVersion
+			return staleAssignmentError(ctx, tx, assignment, batch)
 		}
 		now := s.clock().UTC().Truncate(time.Microsecond)
 		command := newCommand(metadata, batch.ID, now, s.retainFor)
@@ -307,6 +303,13 @@ func (s *AssignmentWorkflowService) changeAssignment(ctx context.Context, assign
 			audit := newAuditEvent(metadata, command.ID, updatedBatch, model.BatchAuditEventAssignmentRejected, model.BatchStatusAssigned, model.BatchStatusApproved, map[string]string{"assignment_id": assignment.ID, "reason": request.RejectionReason}, now)
 			audit.AssignmentID = new(assignment.ID)
 			if err := tx.AppendAudit(ctx, audit); err != nil {
+				return err
+			}
+			claim, _, err := tx.FindAcceptedClaimReservation(ctx, batch)
+			if err != nil {
+				return err
+			}
+			if _, err := assignNextActiveCollector(ctx, tx, updatedBatch, claim, assignment, nil, metadata, command, model.BatchStatusApproved, 2, 1, now, s.newID); err != nil && !errors.Is(err, repository.ErrAssignmentNoActiveCollector) {
 				return err
 			}
 			result = mutationResult(assignment, metadata.CorrelationID, "")
@@ -375,11 +378,7 @@ func (s *AssignmentWorkflowService) recordPickup(ctx context.Context, assignment
 			result = *replay
 			return nil
 		}
-		assignment, err := tx.FindAssignmentForUpdate(ctx, assignmentID)
-		if err != nil {
-			return err
-		}
-		batch, err := tx.FindBatchForUpdate(ctx, assignment.BatchID)
+		assignment, batch, err := lockAssignmentBatch(ctx, tx, assignmentID)
 		if err != nil {
 			return err
 		}
@@ -387,7 +386,7 @@ func (s *AssignmentWorkflowService) recordPickup(ctx context.Context, assignment
 			return ErrAssignmentForbidden
 		}
 		if batch.Version != uint32(metadata.ExpectedVersion) || batch.CurrentAssignmentID == nil || *batch.CurrentAssignmentID != assignment.ID {
-			return ErrAssignmentStaleVersion
+			return staleAssignmentError(ctx, tx, assignment, batch)
 		}
 		if assignment.AssignmentStatus != model.AssignmentStatusAccepted || batch.Status != model.BatchStatusAssigned {
 			return ErrAssignmentInvalidState
@@ -466,6 +465,15 @@ func (s *AssignmentWorkflowService) recordPickup(ctx context.Context, assignment
 		if err := tx.EnqueueOutbox(ctx, newOutbox(eventID, command.ID, updatedBatch, eventType, topic, eventPayload, metadata.CorrelationID, now)); err != nil {
 			return err
 		}
+		if failed {
+			claim, _, err := tx.FindAcceptedClaimReservation(ctx, batch)
+			if err != nil {
+				return err
+			}
+			if _, err := assignNextActiveCollector(ctx, tx, updatedBatch, claim, assignment, nil, metadata, command, model.BatchStatusFailedCollection, 2, 2, now, s.newID); err != nil && !errors.Is(err, repository.ErrAssignmentNoActiveCollector) {
+				return err
+			}
+		}
 		result = mutationResult(assignment, metadata.CorrelationID, eventID)
 		responseJSON, err := json.Marshal(result)
 		if err != nil {
@@ -504,11 +512,7 @@ func (s *AssignmentWorkflowService) RecoverFailedCollection(ctx context.Context,
 		} else if replay != nil {
 			return nil
 		}
-		assignment, err := tx.FindAssignmentForUpdate(ctx, assignmentID)
-		if err != nil {
-			return err
-		}
-		batch, err := tx.FindBatchForUpdate(ctx, assignment.BatchID)
+		assignment, batch, err := lockAssignmentBatch(ctx, tx, assignmentID)
 		if err != nil {
 			return err
 		}
@@ -674,6 +678,36 @@ func mutationResult(assignment *model.BatchAssignment, correlationID, eventID st
 	return dto.AssignmentMutationResult{Data: viewOf(assignment), CorrelationID: correlationID, EventID: eventID, EventState: stateForEvent(eventID)}
 }
 
+// Every assignment mutation locks the aggregate before its assignment rows.
+// The immutable parent lookup avoids old/current assignment lock inversion.
+func lockAssignmentBatch(ctx context.Context, tx repository.AssignmentTransaction, assignmentID string) (*model.BatchAssignment, *model.Batch, error) {
+	batchID, err := tx.FindAssignmentBatchID(ctx, assignmentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	batch, err := tx.FindBatchForUpdate(ctx, batchID)
+	if err != nil {
+		return nil, nil, err
+	}
+	assignment, err := tx.FindAssignmentForUpdate(ctx, assignmentID)
+	return assignment, batch, err
+}
+
+func staleAssignmentError(ctx context.Context, tx repository.AssignmentTransaction, assignment *model.BatchAssignment, batch *model.Batch) error {
+	current := assignment
+	if batch.CurrentAssignmentID != nil && *batch.CurrentAssignmentID != assignment.ID {
+		var err error
+		current, err = tx.FindAssignmentForUpdate(ctx, *batch.CurrentAssignmentID)
+		if err != nil {
+			return err
+		}
+	}
+	return &AssignmentStaleVersionError{CurrentState: dto.AssignmentCurrentState{
+		AssignmentID: current.ID, AssignmentStatus: current.AssignmentStatus, AssignmentVersion: int64(current.Version),
+		BatchID: batch.ID, BatchStatus: string(batch.Status), BatchVersion: int64(batch.Version), CurrentAssignmentID: batch.CurrentAssignmentID,
+	}}
+}
+
 func viewOf(assignment *model.BatchAssignment) dto.AssignmentView {
 	return dto.AssignmentView{AssignmentID: assignment.ID, BatchID: assignment.BatchID, ClaimID: assignment.ClaimID, CollectorUserID: assignment.CollectorUserID, CollectorScopeID: assignment.CollectorScopeID, AssignmentStatus: assignment.AssignmentStatus, AssignmentSequence: int64(assignment.AssignmentSequence), Version: int64(assignment.Version), CreatedAt: assignment.CreatedAt, UpdatedAt: assignment.UpdatedAt}
 }
@@ -686,11 +720,19 @@ func stateForEvent(eventID string) string {
 }
 
 func buildAssignmentEventPayload(eventID, commandID string, batch *model.Batch, eventType, correlationID string, occurredAt time.Time, data map[string]any) ([]byte, error) {
-	return json.Marshal(map[string]any{"event_id": eventID, "event_type": eventType, "schema_version": 1, "command_id": commandID, "batch_id": batch.ID, "batch_version": batch.Version, "claim_epoch": strconv.FormatUint(batch.ClaimEpoch, 10), "sequence_in_command": 1, "occurred_at": contractTimestamp(occurredAt), "correlation_id": correlationID, "data": data})
+	return buildAssignmentEventPayloadAtSequence(eventID, commandID, batch, eventType, correlationID, occurredAt, 1, data)
 }
 
 func newOutbox(eventID, commandID string, batch *model.Batch, eventType, topic string, payload []byte, correlationID string, now time.Time) *model.EventOutbox {
-	return &model.EventOutbox{EventID: eventID, BatchID: batch.ID, CommandID: commandID, EventType: eventType, Topic: topic, SchemaVersion: 1, AggregateVersion: batch.Version, SequenceInCommand: 1, PartitionKey: batch.ID, PayloadJSON: payload, CorrelationID: correlationID, OccurredAt: now, CreatedAt: now, PublishState: model.OutboxPublishStatePending, NextAttemptAt: new(now)}
+	return newOutboxAtSequence(eventID, commandID, batch, eventType, topic, payload, correlationID, now, 1)
+}
+
+func buildAssignmentEventPayloadAtSequence(eventID, commandID string, batch *model.Batch, eventType, correlationID string, occurredAt time.Time, sequence uint32, data map[string]any) ([]byte, error) {
+	return json.Marshal(map[string]any{"event_id": eventID, "event_type": eventType, "schema_version": 1, "command_id": commandID, "batch_id": batch.ID, "batch_version": batch.Version, "claim_epoch": strconv.FormatUint(batch.ClaimEpoch, 10), "sequence_in_command": sequence, "occurred_at": contractTimestamp(occurredAt), "correlation_id": correlationID, "data": data})
+}
+
+func newOutboxAtSequence(eventID, commandID string, batch *model.Batch, eventType, topic string, payload []byte, correlationID string, now time.Time, sequence uint32) *model.EventOutbox {
+	return &model.EventOutbox{EventID: eventID, BatchID: batch.ID, CommandID: commandID, EventType: eventType, Topic: topic, SchemaVersion: 1, AggregateVersion: batch.Version, SequenceInCommand: sequence, PartitionKey: batch.ID, PayloadJSON: payload, CorrelationID: correlationID, OccurredAt: now, CreatedAt: now, PublishState: model.OutboxPublishStatePending, NextAttemptAt: new(now)}
 }
 
 func mapAssignmentRepositoryError(err error) error {

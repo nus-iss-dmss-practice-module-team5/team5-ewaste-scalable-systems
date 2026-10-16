@@ -90,6 +90,9 @@ databaseChangeLog:
       file: changes/030-create-batch-anomalies.sql
       relativeToChangelogFile: true
   - include:
+      file: changes/031-add-round-robin-collector-indexes.sql
+      relativeToChangelogFile: true
+  - include:
       file: seed/101-seed-organisations.sql
       relativeToChangelogFile: true
   - include:

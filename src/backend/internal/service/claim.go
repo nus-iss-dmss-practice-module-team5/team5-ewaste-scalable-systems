@@ -270,16 +270,33 @@ func (s *ClaimWorkflowService) Claim(
 			return err
 		}
 
+		if approvedBatch.Zone == nil || *approvedBatch.Zone == "" {
+			return ErrClaimValidation
+		}
+		lastCollector, err := tx.FindMostRecentCollector(ctx, claim.RecyclerOrgID, *approvedBatch.Zone)
+		if err != nil {
+			return err
+		}
+		automaticAssignment, err := assignNextActiveCollector(ctx, tx, approvedBatch, claim, nil, lastCollector, metadata, command, model.BatchStatusApproved, 2, 2, now, s.newID)
+		if errors.Is(err, repository.ErrAssignmentNoActiveCollector) {
+			return ErrClaimNoActiveCollector
+		}
+		if err != nil {
+			return err
+		}
+
 		result = dto.ClaimResult{
-			BatchID:       approvedBatch.ID,
-			Status:        string(approvedBatch.Status),
-			Version:       int64(approvedBatch.Version),
-			ClaimEpoch:    strconv.FormatUint(approvedBatch.ClaimEpoch, 10),
-			ClaimID:       claim.ID,
-			ReservationID: reservation.ID,
-			EventID:       eventID,
-			EventState:    string(model.OutboxPublishStatePending),
-			CorrelationID: metadata.CorrelationID,
+			BatchID:           automaticAssignment.Batch.ID,
+			Status:            string(automaticAssignment.Batch.Status),
+			Version:           int64(automaticAssignment.Batch.Version),
+			ClaimEpoch:        strconv.FormatUint(automaticAssignment.Batch.ClaimEpoch, 10),
+			ClaimID:           claim.ID,
+			ReservationID:     reservation.ID,
+			EventID:           eventID,
+			EventState:        string(model.OutboxPublishStatePending),
+			CorrelationID:     metadata.CorrelationID,
+			AssignmentID:      automaticAssignment.Assignment.ID,
+			AssignmentEventID: automaticAssignment.EventID,
 		}
 
 		responseJSON, err := json.Marshal(result)

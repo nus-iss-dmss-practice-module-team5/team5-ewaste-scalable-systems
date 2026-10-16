@@ -22,6 +22,7 @@ export const OPPORTUNITY_STATUSES = [
 export type OpportunityStatus = (typeof OPPORTUNITY_STATUSES)[number];
 
 export const ASSIGNMENT_STATUSES = [
+  "PENDING",
   "ACCEPTED",
   "COMPLETED",
   "FAILED",
@@ -82,7 +83,7 @@ export type Opportunity = {
 
 export type ClaimResult = {
   batchId: string;
-  status: "APPROVED";
+  status: "APPROVED" | "ASSIGNED";
   version: number;
   claimEpoch: string;
   claimId: string;
@@ -96,6 +97,7 @@ export type Assignment = {
   assignmentStatus: AssignmentStatus;
   assignmentSequence: number;
   version: number;
+  batchVersion?: number;
   claimId?: string;
   collectorScopeId?: string;
   createdAt?: string;
