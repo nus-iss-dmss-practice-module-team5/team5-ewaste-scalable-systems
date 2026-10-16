@@ -29,8 +29,10 @@ type BatchAssignment struct {
 	ClosedAt             *time.Time `gorm:"column:closed_at"`
 	ClosureReason        *string    `gorm:"column:closure_reason;size:48"`
 	Version              uint32     `gorm:"column:version;not null"`
-	CreatedAt            time.Time  `gorm:"column:created_at"`
-	UpdatedAt            time.Time  `gorm:"column:updated_at"`
+	// Read projection from ewaste_batches, never an assignment-table column.
+	BatchVersion uint32    `gorm:"column:batch_version;->;-:migration"`
+	CreatedAt    time.Time `gorm:"column:created_at"`
+	UpdatedAt    time.Time `gorm:"column:updated_at"`
 }
 
 func (BatchAssignment) TableName() string { return "batch_assignments" }

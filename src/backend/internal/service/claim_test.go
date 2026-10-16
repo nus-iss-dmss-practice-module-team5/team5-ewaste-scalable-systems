@@ -13,14 +13,18 @@ import (
 )
 
 type fakeClaimState struct {
-	batch        *model.Batch
-	match        *model.ClaimMatch
-	pool         *model.CapacityPool
-	commands     []*model.CommandIdempotency
-	claims       []*model.BatchClaim
-	reservations []*model.CapacityReservation
-	audits       []*model.BatchAuditEvent
-	outbox       []*model.EventOutbox
+	batch         *model.Batch
+	match         *model.ClaimMatch
+	pool          *model.CapacityPool
+	commands      []*model.CommandIdempotency
+	claims        []*model.BatchClaim
+	reservations  []*model.CapacityReservation
+	audits        []*model.BatchAuditEvent
+	outbox        []*model.EventOutbox
+	actions       []*model.AssignmentAction
+	assignment    *model.BatchAssignment
+	collectors    []repository.CollectorCandidate
+	lastCollector *repository.CollectorCandidate
 }
 
 type fakeClaimRepository struct {
@@ -155,6 +159,60 @@ func (t *fakeClaimTransaction) ApproveBatch(
 	return t.state.batch, nil
 }
 
+func (t *fakeClaimTransaction) FindMostRecentCollector(context.Context, string, string) (*repository.CollectorCandidate, error) {
+	return t.state.lastCollector, nil
+}
+
+func (t *fakeClaimTransaction) FindNextActiveCollector(_ context.Context, _ string, _ string, after *repository.CollectorCandidate, excludeUserID string, _ time.Time) (*repository.CollectorCandidate, error) {
+	for index := range t.state.collectors {
+		candidate := &t.state.collectors[index]
+		if candidate.UserID == excludeUserID {
+			continue
+		}
+		if after == nil || candidate.OrganisationID > after.OrganisationID || (candidate.OrganisationID == after.OrganisationID && candidate.UserID > after.UserID) {
+			return candidate, nil
+		}
+	}
+	for index := range t.state.collectors {
+		candidate := &t.state.collectors[index]
+		if candidate.UserID != excludeUserID {
+			return candidate, nil
+		}
+	}
+	return nil, repository.ErrAssignmentNoActiveCollector
+}
+
+func (t *fakeClaimTransaction) CreateAssignment(_ context.Context, assignment *model.BatchAssignment) error {
+	t.state.assignment = assignment
+	return nil
+}
+
+func (t *fakeClaimTransaction) LinkCommandAssignment(_ context.Context, commandID, assignmentID string) error {
+	for _, command := range t.state.commands {
+		if command.ID == commandID {
+			command.AssignmentID = new(assignmentID)
+			return nil
+		}
+	}
+	return errors.New("test command not found")
+}
+
+func (t *fakeClaimTransaction) UpdateBatchAssignment(_ context.Context, _ string, expected uint32, from, to model.BatchStatus, assignmentID *string, now time.Time) (*model.Batch, error) {
+	if t.state.batch.Version != expected || t.state.batch.Status != from {
+		return nil, repository.ErrClaimConcurrency
+	}
+	t.state.batch.Status = to
+	t.state.batch.Version++
+	t.state.batch.CurrentAssignmentID = assignmentID
+	t.state.batch.UpdatedAt = now
+	return t.state.batch, nil
+}
+
+func (t *fakeClaimTransaction) CreateAction(_ context.Context, action *model.AssignmentAction) error {
+	t.state.actions = append(t.state.actions, action)
+	return nil
+}
+
 func (t *fakeClaimTransaction) CompleteCommand(
 	_ context.Context,
 	commandID string,
@@ -208,6 +266,7 @@ func newClaimServiceFixture() (
 ) {
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	weight := "100.00"
+	zone := "NORTH"
 	deadline := now.Add(48 * time.Hour)
 
 	repo := &fakeClaimRepository{state: fakeClaimState{
@@ -217,6 +276,7 @@ func newClaimServiceFixture() (
 			ClaimEpoch:         1,
 			Version:            3,
 			EstimatedWeightKg:  new(weight),
+			Zone:               new(zone),
 			CollectionDeadline: new(deadline),
 			UpdatedAt:          now,
 		},
@@ -236,11 +296,12 @@ func newClaimServiceFixture() (
 			IsActive:      true,
 			Version:       7,
 		},
+		collectors: []repository.CollectorCandidate{{UserID: "USR-005", OrganisationID: "COL-001", ScopeID: "scope-001", ScopeVersion: 1}},
 	}}
 
 	service := NewClaimWorkflowService(repo, fakeLease{})
 	service.clock = func() time.Time { return now }
-	ids := []string{"claim-001", "reservation-001", "event-001"}
+	ids := []string{"claim-001", "reservation-001", "event-001", "assignment-001", "assignment-event-001"}
 	service.newID = func() string {
 		id := ids[0]
 		ids = ids[1:]
@@ -276,20 +337,37 @@ func TestClaimSuccessCreatesAtomicEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim failed: %v", err)
 	}
-	if result.Status != string(model.BatchStatusApproved) || result.Version != 4 {
+	if result.Status != string(model.BatchStatusAssigned) || result.Version != 5 || result.AssignmentID != "assignment-001" {
 		t.Fatalf("unexpected claim result: %+v", result)
 	}
 	if len(repo.state.claims) != 1 || len(repo.state.reservations) != 1 {
 		t.Fatalf("expected one claim and reservation")
 	}
-	if len(repo.state.audits) != 1 || repo.state.audits[0].EventType != model.BatchAuditEventClaimConfirmed {
+	if len(repo.state.audits) != 2 || repo.state.audits[0].EventType != model.BatchAuditEventClaimConfirmed || repo.state.audits[1].EventType != model.BatchAuditEventCollectorAssigned {
 		t.Fatalf("claim audit evidence missing")
 	}
-	if len(repo.state.outbox) != 1 || repo.state.outbox[0].EventType != model.ClaimConfirmedEventType {
+	if len(repo.state.outbox) != 2 || repo.state.outbox[0].EventType != model.ClaimConfirmedEventType || repo.state.outbox[1].EventType != model.CollectorAssignedEventType || repo.state.outbox[1].SequenceInCommand != 2 {
 		t.Fatalf("claim outbox evidence missing")
 	}
 	if repo.state.outbox[0].OccurredAt.Nanosecond()%1000 != 0 {
 		t.Fatal("claim event timestamp must be microsecond-aligned before MySQL can round it")
+	}
+}
+
+func TestClaimAssignsTheNextCollectorInTheRoundRobin(t *testing.T) {
+	service, repo, request, metadata := newClaimServiceFixture()
+	repo.state.collectors = append(repo.state.collectors, repository.CollectorCandidate{UserID: "USR-006", OrganisationID: "COL-002", ScopeID: "scope-002", ScopeVersion: 1})
+	repo.state.lastCollector = &repo.state.collectors[0]
+
+	result, err := service.Claim(context.Background(), "batch-001", request, metadata)
+	if err != nil {
+		t.Fatalf("claim failed: %v", err)
+	}
+	if result.AssignmentID != "assignment-001" || repo.state.assignment == nil || repo.state.assignment.CollectorUserID != "USR-006" || repo.state.assignment.AssignmentStatus != model.AssignmentStatusPending {
+		t.Fatalf("round-robin did not choose the next active collector: result=%+v assignment=%+v", result, repo.state.assignment)
+	}
+	if len(repo.state.outbox) != 2 || repo.state.outbox[1].EventType != model.CollectorAssignedEventType || repo.state.outbox[1].SequenceInCommand != 2 {
+		t.Fatalf("claim assignment event missing or out of order: %+v", repo.state.outbox)
 	}
 }
 
@@ -308,7 +386,7 @@ func TestClaimReplayReturnsOriginalResponseWithoutNewWrites(t *testing.T) {
 		t.Fatalf("replay changed the original response")
 	}
 	if len(repo.state.claims) != 1 || len(repo.state.reservations) != 1 ||
-		len(repo.state.audits) != 1 || len(repo.state.outbox) != 1 {
+		len(repo.state.audits) != 2 || len(repo.state.outbox) != 2 {
 		t.Fatalf("replay created additional domain evidence")
 	}
 }

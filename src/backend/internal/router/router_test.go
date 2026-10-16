@@ -301,3 +301,116 @@ func TestDocsExposeOpenAPISpecAndSwaggerUI(t *testing.T) {
 		t.Fatalf("expected Swagger UI 200, got %d", ui.Code)
 	}
 }
+
+func TestServiceRoutersRegisterOnlyOwnedRoutes(t *testing.T) {
+	repo := routerTestRepository{}
+	tokens := token.NewService("router-test", "access-secret", "refresh-secret", "refresh-hash-secret", time.Minute, time.Hour)
+	logger := zap.NewNop()
+	batchService := service.NewBatchService(repository.NewGormBatchRepository(nil))
+	deps := ServiceDependencies{
+		AuthController:         controller.NewAuthController(service.NewAuthService(repo, tokens, logger), logger),
+		BatchController:        controller.NewBatchController(batchService, logger),
+		EvidenceController:     controller.NewEvidenceController(nil, logger),
+		ClaimController:        controller.NewClaimController(service.NewClaimWorkflowService(repository.NewGormClaimRepository(nil), nil), logger),
+		AssignmentController:   controller.NewAssignmentController(service.NewAssignmentWorkflowService(repository.NewGormAssignmentRepository(nil)), logger),
+		AnalyticsController:    controller.NewAnalyticsController(batchService, logger),
+		WorkflowReadController: controller.NewWorkflowReadController(nil, logger),
+		Tokens:                 tokens,
+		AuthRepository:         repo,
+		Limiter:                routerTestLimiter{},
+		Logger:                 logger,
+		AnalyticsServiceToken:  "analytics-secret",
+	}
+
+	tests := []struct {
+		name        string
+		service     Service
+		mustHave    []string
+		mustNotHave []string
+	}{
+		{
+			name:        "identity",
+			service:     IdentityAccessService,
+			mustHave:    []string{"POST /v1/auth/login", "POST /v1/auth/refresh", "POST /v1/auth/logout"},
+			mustNotHave: []string{"POST /v1/batches", "POST /v1/claims/batches/:batch_id", "POST /v1/custody/assignments/:assignment_id/handoff"},
+		},
+		{
+			name:        "batch workflow",
+			service:     BatchWorkflowService,
+			mustHave:    []string{"POST /v1/batches", "POST /v1/batches/:batch_id/submit", "GET /v1/opportunities", "POST /internal/v1/analytics/batches/:batch_id/results"},
+			mustNotHave: []string{"POST /v1/claims/batches/:batch_id", "POST /v1/logistics/assignments/:assignment_id/fail", "POST /v1/custody/assignments/:assignment_id/handoff"},
+		},
+		{
+			name:        "claim logistics",
+			service:     ClaimLogisticsService,
+			mustHave:    []string{"POST /v1/claims/batches/:batch_id", "POST /v1/logistics/assignments/batches/:batch_id", "POST /v1/logistics/assignments/:assignment_id/fail"},
+			mustNotHave: []string{"POST /v1/batches", "POST /v1/custody/assignments/:assignment_id/handoff", "POST /internal/v1/analytics/batches/:batch_id/results"},
+		},
+		{
+			name:        "custody verification",
+			service:     CustodyVerificationService,
+			mustHave:    []string{"POST /v1/custody/assignments/:assignment_id/handoff", "POST /v1/processing/batches/:batch_id/receipt", "POST /v1/evidence/batches/:batch_id", "GET /v1/audit/impact"},
+			mustNotHave: []string{"POST /v1/batches", "POST /v1/claims/batches/:batch_id", "POST /v1/logistics/assignments/:assignment_id/fail"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := NewServiceRouter(tt.service, deps)
+			if err != nil {
+				t.Fatalf("NewServiceRouter(%s): %v", tt.service, err)
+			}
+			routes := map[string]bool{}
+			for _, route := range r.Routes() {
+				routes[route.Method+" "+route.Path] = true
+			}
+			for _, want := range tt.mustHave {
+				if !routes[want] {
+					t.Errorf("route missing: %s; got %#v", want, routes)
+				}
+			}
+			for _, forbidden := range tt.mustNotHave {
+				if routes[forbidden] {
+					t.Errorf("route registered outside %s boundary: %s", tt.service, forbidden)
+				}
+			}
+			for _, probe := range []string{"GET /healthz", "GET /readyz"} {
+				if !routes[probe] {
+					t.Errorf("probe missing: %s", probe)
+				}
+			}
+		})
+	}
+}
+
+func TestNewServiceRouterRejectsUnknownService(t *testing.T) {
+	if _, err := NewServiceRouter("unknown", ServiceDependencies{}); err == nil {
+		t.Fatal("expected unknown service to be rejected")
+	}
+}
+
+func TestSplitWorkflowKeepsAnalyticsWorkerPathsAuthenticated(t *testing.T) {
+	deps := ServiceDependencies{AnalyticsController: controller.NewAnalyticsController(nil, zap.NewNop()), AnalyticsServiceToken: "test-analytics-service-token-longer-than-32-chars"}
+	for _, serviceName := range []Service{BatchWorkflowService, ClaimLogisticsService, CustodyVerificationService, IdentityAccessService} {
+		router, err := NewServiceRouter(serviceName, deps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, route := range []struct{ method, path string }{
+			{http.MethodGet, "/api/v1/batches/batch-1/analytics-input"},
+			{http.MethodPost, "/api/v1/batches/batch-1/analytics-results"},
+			{http.MethodGet, "/internal/v1/analytics/batches/batch-1/input"},
+			{http.MethodPost, "/internal/v1/analytics/batches/batch-1/results"},
+		} {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(route.method, route.path, nil))
+			want := http.StatusNotFound
+			if serviceName == BatchWorkflowService {
+				want = http.StatusUnauthorized
+			}
+			if recorder.Code != want {
+				t.Errorf("%s %s: got %d want %d", serviceName, route.path, recorder.Code, want)
+			}
+		}
+	}
+}

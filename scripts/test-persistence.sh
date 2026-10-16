@@ -2849,7 +2849,7 @@ run_processing() {
   lb c4_clean upgrade update --context-filter=none
   dump_rows c4_clean "$EVIDENCE_DIR/legacy-after.sql" "${LEGACY_TABLES[@]}"
   diff -u "$EVIDENCE_DIR/legacy-before.sql" "$EVIDENCE_DIR/legacy-after.sql" > "$EVIDENCE_DIR/legacy-preserved.diff"
-  mysql_query c4_clean -e "SELECT ID,AUTHOR,FILENAME,MD5SUM,DATEEXECUTED FROM DATABASECHANGELOG WHERE ID NOT IN ('EWCSB3-026','EWCSB3-027','EWCSB3-028','EWCSB3-029','EWCSB3-030') ORDER BY ID" > "$EVIDENCE_DIR/changelog-after.tsv"
+  mysql_query c4_clean -e "SELECT ID,AUTHOR,FILENAME,MD5SUM,DATEEXECUTED FROM DATABASECHANGELOG WHERE ID NOT IN ('EWCSB3-026','EWCSB3-027','EWCSB3-028','EWCSB3-029','EWCSB3-030','EWSS22-031') ORDER BY ID" > "$EVIDENCE_DIR/changelog-after.tsv"
   diff -u "$EVIDENCE_DIR/changelog-before.tsv" "$EVIDENCE_DIR/changelog-after.tsv" > "$EVIDENCE_DIR/changelog-preserved.diff"
   for db in processing_clean c4_clean; do
     mysql_query "$db" < database/tests/verify-processing-migrations.sql > "$EVIDENCE_DIR/$db-schema.tsv"

@@ -36,6 +36,12 @@ type ClaimTransaction interface {
 	CreateClaim(context.Context, *model.BatchClaim) error
 	CreateReservation(context.Context, *model.CapacityReservation) error
 	ApproveBatch(context.Context, string, uint64, uint32, string, time.Time) (*model.Batch, error)
+	FindMostRecentCollector(context.Context, string, string) (*CollectorCandidate, error)
+	FindNextActiveCollector(context.Context, string, string, *CollectorCandidate, string, time.Time) (*CollectorCandidate, error)
+	CreateAssignment(context.Context, *model.BatchAssignment) error
+	LinkCommandAssignment(context.Context, string, string) error
+	UpdateBatchAssignment(context.Context, string, uint32, model.BatchStatus, model.BatchStatus, *string, time.Time) (*model.Batch, error)
+	CreateAction(context.Context, *model.AssignmentAction) error
 	CompleteCommand(context.Context, string, int, []byte, time.Time) error
 	AppendAudit(context.Context, *model.BatchAuditEvent) error
 	EnqueueOutbox(context.Context, *model.EventOutbox) error
@@ -383,6 +389,56 @@ func (t *gormClaimTransaction) ApproveBatch(
 		return nil, err
 	}
 	return &batch, nil
+}
+
+func (t *gormClaimTransaction) FindMostRecentCollector(ctx context.Context, recyclerOrgID, zone string) (*CollectorCandidate, error) {
+	return findMostRecentCollector(ctx, t.db, recyclerOrgID, zone)
+}
+
+func (t *gormClaimTransaction) FindNextActiveCollector(ctx context.Context, recyclerOrgID, zone string, after *CollectorCandidate, excludeUserID string, now time.Time) (*CollectorCandidate, error) {
+	return findNextActiveCollector(ctx, t.db, recyclerOrgID, zone, after, excludeUserID, now)
+}
+
+func (t *gormClaimTransaction) CreateAssignment(ctx context.Context, assignment *model.BatchAssignment) error {
+	if assignment == nil {
+		return errors.New("repository: claim assignment is nil")
+	}
+	return t.db.WithContext(ctx).Create(assignment).Error
+}
+
+func (t *gormClaimTransaction) LinkCommandAssignment(ctx context.Context, commandID, assignmentID string) error {
+	result := t.db.WithContext(ctx).Model(&model.CommandIdempotency{}).Where("id = ? AND assignment_id IS NULL", commandID).Update("assignment_id", assignmentID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrClaimConcurrency
+	}
+	return nil
+}
+
+func (t *gormClaimTransaction) UpdateBatchAssignment(ctx context.Context, batchID string, expectedVersion uint32, fromStatus, toStatus model.BatchStatus, assignmentID *string, now time.Time) (*model.Batch, error) {
+	result := t.db.WithContext(ctx).Model(&model.Batch{}).Where("id = ? AND version = ? AND status = ?", batchID, expectedVersion, fromStatus).Updates(map[string]any{
+		"status": toStatus, "current_assignment_id": assignmentID, "version": gorm.Expr("version + 1"), "updated_at": now,
+	})
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return nil, ErrClaimConcurrency
+	}
+	var batch model.Batch
+	if err := t.db.WithContext(ctx).Where("id = ?", batchID).First(&batch).Error; err != nil {
+		return nil, err
+	}
+	return &batch, nil
+}
+
+func (t *gormClaimTransaction) CreateAction(ctx context.Context, action *model.AssignmentAction) error {
+	if action == nil {
+		return errors.New("repository: claim assignment action is nil")
+	}
+	return t.db.WithContext(ctx).Create(action).Error
 }
 
 func (t *gormClaimTransaction) CompleteCommand(

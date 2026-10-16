@@ -67,7 +67,7 @@ func (h *AssignmentController) Accept(c *gin.Context) {
 	}
 	result, err := h.service.Accept(c.Request.Context(), params.AssignmentID, metadata)
 	if err != nil {
-		h.writeError(c, mapAssignmentError(err))
+		h.writeMutationError(c, err)
 		return
 	}
 	response.JSON(c, http.StatusOK, result)
@@ -84,7 +84,7 @@ func (h *AssignmentController) Reject(c *gin.Context) {
 	}
 	result, err := h.service.Reject(c.Request.Context(), params.AssignmentID, request, metadata)
 	if err != nil {
-		h.writeError(c, mapAssignmentError(err))
+		h.writeMutationError(c, err)
 		return
 	}
 	response.JSON(c, http.StatusOK, result)
@@ -101,7 +101,7 @@ func (h *AssignmentController) Handoff(c *gin.Context) {
 	}
 	result, err := h.service.Handoff(c.Request.Context(), params.AssignmentID, request, metadata)
 	if err != nil {
-		h.writeError(c, mapAssignmentError(err))
+		h.writeMutationError(c, err)
 		return
 	}
 	response.JSON(c, http.StatusOK, result)
@@ -118,7 +118,7 @@ func (h *AssignmentController) Fail(c *gin.Context) {
 	}
 	result, err := h.service.Fail(c.Request.Context(), params.AssignmentID, request, metadata)
 	if err != nil {
-		h.writeError(c, mapAssignmentError(err))
+		h.writeMutationError(c, err)
 		return
 	}
 	response.JSON(c, http.StatusOK, result)
@@ -176,6 +176,20 @@ func decodeAssignmentBody(c *gin.Context, target any) bool {
 func (h *AssignmentController) writeError(c *gin.Context, code apierror.Code) {
 	if h.logger != nil {
 		h.logger.Warn("assignment request failed", zap.String("error_code", string(code)), zap.String("correlation_id", middleware.GetCorrelationID(c)))
+	}
+	response.Error(c, code, middleware.GetCorrelationID(c))
+}
+
+func (h *AssignmentController) writeMutationError(c *gin.Context, err error) {
+	code := mapAssignmentError(err)
+	if h.logger != nil {
+		h.logger.Warn("assignment request failed", zap.String("error_code", string(code)), zap.String("correlation_id", middleware.GetCorrelationID(c)))
+	}
+	if code == apierror.StaleVersion {
+		if current, ok := service.AssignmentCurrentStateFromError(err); ok {
+			response.ErrorWithDetails(c, code, middleware.GetCorrelationID(c), current)
+			return
+		}
 	}
 	response.Error(c, code, middleware.GetCorrelationID(c))
 }

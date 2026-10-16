@@ -432,7 +432,7 @@ paths:
               notes: Ready for collection.
       responses:
         '200':
-          description: Claim confirmed and batch approved
+          description: Claim confirmed and the next active collector assigned in the same transaction
           content:
             application/json:
               schema:
@@ -449,8 +449,10 @@ paths:
   /api/v1/batches/{batch_id}/assignments:
     post:
       tags: [Assignments]
-      summary: Select an approved batch and create an accepted assignment
+      summary: Manually select an approved batch as a collector (legacy fallback)
       operationId: selectAssignment
+      deprecated: true
+      description: Winning claims now assign the next active collector automatically. This route remains only for operational recovery of an APPROVED batch.
       parameters:
         - $ref: '#/components/parameters/BatchId'
         - $ref: '#/components/parameters/Authorization'
@@ -588,7 +590,7 @@ paths:
               rejection_reason: route_unavailable
       responses:
         '200':
-          description: Assignment rejected and batch returned to APPROVED
+          description: Assignment rejected and the next active collector is assigned when available
           content:
             application/json:
               schema:
@@ -661,7 +663,7 @@ paths:
               observed_details: No authorised recipient was present.
       responses:
         '200':
-          description: Failed pickup recorded and assignment closed
+          description: Failed pickup recorded and the next active collector is assigned when available
           content:
             application/json:
               schema:
@@ -1384,15 +1386,17 @@ components:
         notes: {type: string, maxLength: 255}
     ClaimResult:
       type: object
-      required: [batch_id, status, version, claim_epoch, claim_id, reservation_id, event_id, event_state, correlation_id]
+      required: [batch_id, status, version, claim_epoch, claim_id, reservation_id, assignment_id, event_id, assignment_event_id, event_state, correlation_id]
       properties:
         batch_id: {type: string, format: uuid}
-        status: {type: string, enum: [APPROVED]}
+        status: {type: string, enum: [ASSIGNED]}
         version: {type: integer, minimum: 1}
         claim_epoch: {type: string, pattern: '^[0-9]+$'}
         claim_id: {type: string, format: uuid}
         reservation_id: {type: string, format: uuid}
+        assignment_id: {type: string, format: uuid, description: Pending assignment selected by the round-robin allocator}
         event_id: {type: string, format: uuid}
+        assignment_event_id: {type: string, format: uuid, description: CollectorAssigned outbox event emitted after ClaimConfirmed}
         event_state: {type: string, enum: [PENDING, PUBLISHED]}
         correlation_id: {type: string}
     ClaimResponse:
@@ -1444,11 +1448,23 @@ components:
         claim_id: {type: string, format: uuid}
         collector_user_id: {type: string, format: uuid}
         collector_scope_id: {type: string, format: uuid}
-        assignment_status: {type: string, enum: [ACCEPTED, COMPLETED, FAILED, SUPERSEDED]}
+        assignment_status: {type: string, enum: [PENDING, ACCEPTED, COMPLETED, FAILED, SUPERSEDED]}
         assignment_sequence: {type: integer, minimum: 1}
         version: {type: integer, minimum: 1}
+        batch_version: {type: integer, minimum: 1, description: Current batch version on assignment reads. Use for If-Match-Version; version is the assignment version.}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    AssignmentCurrentState:
+      type: object
+      required: [assignment_id, assignment_status, assignment_version, batch_id, batch_status, batch_version]
+      properties:
+        assignment_id: {type: string, format: uuid}
+        assignment_status: {type: string, enum: [PENDING, ACCEPTED, COMPLETED, FAILED, SUPERSEDED]}
+        assignment_version: {type: integer, minimum: 1}
+        batch_id: {type: string, format: uuid}
+        batch_status: {type: string}
+        batch_version: {type: integer, minimum: 1}
+        current_assignment_id: {type: string, format: uuid, description: Present when the batch has a current assignment}
     AssignmentMutationResponse:
       type: object
       required: [data, correlation_id]
@@ -1472,6 +1488,10 @@ components:
       type: object
       required: [code, message, correlation_id]
       properties:
+        current_state:
+          description: Authoritative snapshot returned for stale assignment commands. Review before resubmitting.
+          allOf:
+            - {$ref: '#/components/schemas/AssignmentCurrentState'}
         code: {type: string}
         message: {type: string}
         correlation_id: {type: string, maxLength: 128}

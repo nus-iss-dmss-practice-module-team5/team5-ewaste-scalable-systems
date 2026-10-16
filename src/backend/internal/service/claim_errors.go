@@ -12,5 +12,6 @@ var (
 	ErrClaimInProgress          = errors.New("claim: command already in progress")
 	ErrClaimConcurrent          = errors.New("claim: concurrent claim")
 	ErrClaimCapacity            = errors.New("claim: insufficient capacity")
+	ErrClaimNoActiveCollector   = errors.New("claim: no active collector")
 	ErrClaimLeaseUnavailable    = errors.New("claim: redis lease unavailable")
 )

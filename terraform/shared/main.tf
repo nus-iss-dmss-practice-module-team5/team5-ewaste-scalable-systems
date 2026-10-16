@@ -18,10 +18,22 @@ provider "azurerm" {
   features {}
 }
 
+variable "acr_name" {
+  type        = string
+  default     = "acrewastescale"
+  description = "Globally unique name for the shared Azure Container Registry."
+}
+
+variable "location" {
+  type        = string
+  default     = "indonesiacentral"
+  description = "Primary Azure region for shared infrastructure."
+}
+
 # Persistent shared resource group.
 resource "azurerm_resource_group" "shared" {
   name     = "rg-ewaste-shared"
-  location = "malaysiawest"
+  location = var.location
 
   tags = {
     Project   = "Responsible E-Waste Chain-of-Custody"
@@ -36,9 +48,9 @@ resource "azurerm_resource_group" "shared" {
 # All image pushes from CI/CD runners and pulls from ACA runtime flow exclusively
 # through per-environment Private Endpoints over Azure Private Link.
 resource "azurerm_container_registry" "acr" {
-  name                          = "acrewasteplatform"
+  name                          = var.acr_name
   resource_group_name           = azurerm_resource_group.shared.name
-  location                      = "japaneast"
+  location                      = azurerm_resource_group.shared.location
   sku                           = "Premium"
   admin_enabled                 = false
   anonymous_pull_enabled        = false
@@ -67,10 +79,15 @@ resource "azurerm_log_analytics_workspace" "logs" {
 
 output "acr_id" {
   value       = azurerm_container_registry.acr.id
-  description = "Shared ACR resource ID for RBAC bindings and environment private endpoints."
+  description = "Resource ID of the centralized Azure Container Registry."
+}
+
+output "acr_login_server" {
+  value       = azurerm_container_registry.acr.login_server
+  description = "Login server endpoint for the Azure Container Registry."
 }
 
 output "log_analytics_workspace_id" {
   value       = azurerm_log_analytics_workspace.logs.id
-  description = "Centralized Log Analytics Workspace resource ID."
+  description = "Resource ID of the centralized Log Analytics Workspace."
 }

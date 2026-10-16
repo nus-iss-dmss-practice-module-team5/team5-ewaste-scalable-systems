@@ -40,7 +40,7 @@ class AnalyticsPersistenceTests(unittest.TestCase):
         import bcrypt
         password = secrets.token_urlsafe(24)
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
-        for email in ("donor1", "recycler1", "collector1", "auditor"):
+        for email in ("donor1", "recycler1", "collector1", "collector2", "auditor"):
             self.helper.sql("UPDATE users SET password_hash=%s WHERE email=%s", (hashed, email + "@ewaste.test"))
             result = self.http("POST", "/api/v1/auth/login", email,
                                {"email": email + "@ewaste.test", "password": password})
@@ -96,15 +96,22 @@ class AnalyticsPersistenceTests(unittest.TestCase):
         matched = eventually(lambda: self.helper.sql("SELECT version FROM ewaste_batches WHERE id=%s AND status='MATCHED'", (batch,)))[0]
         claimed = self.http("POST", path + "/claim", "recycler1", {"expected_version": matched["version"], "claim_epoch": "1"},
                             label + "-claim", matched["version"])["data"]
-        selected = self.http("POST", path + "/assignments", "collector1",
-                             {"expected_version": claimed["version"], "claim_epoch": "1",
-                              "collector_scope_id": "e1070000-0000-4000-8000-000000000001"},
-                             label + "-assign", claimed["version"], status=201)["data"]
-        batch_version = self.sql("SELECT version FROM ewaste_batches WHERE id=%s", (batch,))[0]["version"]
-        self.http("POST", "/api/v1/assignments/" + selected["assignment_id"] + "/handoff", "collector1",
-                           {"pickup_occurred_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
-                            "donor_representative_name": "Synthetic Test", "actual_item_count": 5, "verification_hash": "a" * 64},
-                           label + "-handoff", batch_version)
+        # Claim confirmation now atomically assigns the next collector in the
+        # ring. Read that assignment's principal instead of issuing the former
+        # manual-selection command, which must conflict once the batch is ASSIGNED.
+        assigned = self.sql("""SELECT assignment.id, collector.email
+                             FROM batch_assignments AS assignment
+                             JOIN users AS collector ON collector.user_id = assignment.collector_user_id
+                             WHERE assignment.id=%s""", (claimed["assignment_id"],))[0]
+        collector = assigned["email"].split("@", 1)[0]
+        self.assertIn(collector, self.tokens)
+        self.http("POST", "/api/v1/assignments/" + assigned["id"] + "/accept", collector, {},
+                  label + "-accept", claimed["version"])
+        handoff_version = self.sql("SELECT version FROM ewaste_batches WHERE id=%s", (batch,))[0]["version"]
+        self.http("POST", "/api/v1/assignments/" + assigned["id"] + "/handoff", collector,
+                            {"pickup_occurred_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+                             "donor_representative_name": "Synthetic Test", "actual_item_count": 5, "verification_hash": "a" * 64},
+                            label + "-handoff", handoff_version)
         batch_version = self.sql("SELECT version FROM ewaste_batches WHERE id=%s", (batch,))[0]["version"]
         received = self.http("POST", path + "/receipt", "recycler1", receipt, label + "-receipt", batch_version)
         replay = self.http("POST", path + "/receipt", "recycler1", receipt, label + "-receipt", batch_version)
