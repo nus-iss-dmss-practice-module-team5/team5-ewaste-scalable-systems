@@ -481,5 +481,6 @@ func (r *GormWorkflowReadRepository) assignmentQuery(
 
 	return r.db.WithContext(ctx).
 		Model(&model.BatchAssignment{}).
+		Select("batch_assignments.*, (SELECT b.version FROM ewaste_batches AS b WHERE b.id = batch_assignments.batch_id) AS batch_version").
 		Where("collector_user_id = ? AND collector_org_id = ?", collectorUserID, collectorOrganisationID), nil
 }

@@ -336,7 +336,7 @@ func assignmentToDTO(assignment *model.BatchAssignment) dto.AssignmentView {
 		AssignmentID: assignment.ID, BatchID: assignment.BatchID, ClaimID: assignment.ClaimID,
 		CollectorUserID: assignment.CollectorUserID, CollectorScopeID: assignment.CollectorScopeID,
 		AssignmentStatus: assignment.AssignmentStatus, AssignmentSequence: int64(assignment.AssignmentSequence),
-		Version: int64(assignment.Version), CreatedAt: assignment.CreatedAt, UpdatedAt: assignment.UpdatedAt,
+		Version: int64(assignment.Version), BatchVersion: int64(assignment.BatchVersion), CreatedAt: assignment.CreatedAt, UpdatedAt: assignment.UpdatedAt,
 	}
 }
 

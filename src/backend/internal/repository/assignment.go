@@ -38,6 +38,7 @@ type AssignmentTransaction interface {
 	FindMostRecentCollector(context.Context, string, string) (*CollectorCandidate, error)
 	FindNextActiveCollector(context.Context, string, string, *CollectorCandidate, string, time.Time) (*CollectorCandidate, error)
 	FindLatestAssignment(context.Context, string) (*model.BatchAssignment, error)
+	FindAssignmentBatchID(context.Context, string) (string, error)
 	FindAssignmentForUpdate(context.Context, string) (*model.BatchAssignment, error)
 	CreateAssignment(context.Context, *model.BatchAssignment) error
 	UpdateAssignment(context.Context, *model.BatchAssignment) error
@@ -190,6 +191,17 @@ func (t *gormAssignmentTransaction) FindLatestAssignment(ctx context.Context, ba
 		return nil, err
 	}
 	return &assignment, nil
+}
+
+// FindAssignmentBatchID reads only the immutable parent identity, without a
+// row lock, so callers can lock the batch before any assignment row.
+func (t *gormAssignmentTransaction) FindAssignmentBatchID(ctx context.Context, assignmentID string) (string, error) {
+	var assignment model.BatchAssignment
+	err := t.db.WithContext(ctx).Select("batch_id").Where("id = ?", assignmentID).Take(&assignment).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", ErrAssignmentNotFound
+	}
+	return assignment.BatchID, err
 }
 
 func (t *gormAssignmentTransaction) FindAssignmentForUpdate(ctx context.Context, assignmentID string) (*model.BatchAssignment, error) {

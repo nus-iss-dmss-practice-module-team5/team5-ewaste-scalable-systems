@@ -238,11 +238,7 @@ func (s *AssignmentWorkflowService) changeAssignment(ctx context.Context, assign
 			result = *replay
 			return nil
 		}
-		assignment, err := tx.FindAssignmentForUpdate(ctx, assignmentID)
-		if err != nil {
-			return err
-		}
-		batch, err := tx.FindBatchForUpdate(ctx, assignment.BatchID)
+		assignment, batch, err := lockAssignmentBatch(ctx, tx, assignmentID)
 		if err != nil {
 			return err
 		}
@@ -382,11 +378,7 @@ func (s *AssignmentWorkflowService) recordPickup(ctx context.Context, assignment
 			result = *replay
 			return nil
 		}
-		assignment, err := tx.FindAssignmentForUpdate(ctx, assignmentID)
-		if err != nil {
-			return err
-		}
-		batch, err := tx.FindBatchForUpdate(ctx, assignment.BatchID)
+		assignment, batch, err := lockAssignmentBatch(ctx, tx, assignmentID)
 		if err != nil {
 			return err
 		}
@@ -520,11 +512,7 @@ func (s *AssignmentWorkflowService) RecoverFailedCollection(ctx context.Context,
 		} else if replay != nil {
 			return nil
 		}
-		assignment, err := tx.FindAssignmentForUpdate(ctx, assignmentID)
-		if err != nil {
-			return err
-		}
-		batch, err := tx.FindBatchForUpdate(ctx, assignment.BatchID)
+		assignment, batch, err := lockAssignmentBatch(ctx, tx, assignmentID)
 		if err != nil {
 			return err
 		}
@@ -688,6 +676,21 @@ func (s *AssignmentWorkflowService) action(metadata BatchCommandMetadata, comman
 
 func mutationResult(assignment *model.BatchAssignment, correlationID, eventID string) dto.AssignmentMutationResult {
 	return dto.AssignmentMutationResult{Data: viewOf(assignment), CorrelationID: correlationID, EventID: eventID, EventState: stateForEvent(eventID)}
+}
+
+// Every assignment mutation locks the aggregate before its assignment rows.
+// The immutable parent lookup avoids old/current assignment lock inversion.
+func lockAssignmentBatch(ctx context.Context, tx repository.AssignmentTransaction, assignmentID string) (*model.BatchAssignment, *model.Batch, error) {
+	batchID, err := tx.FindAssignmentBatchID(ctx, assignmentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	batch, err := tx.FindBatchForUpdate(ctx, batchID)
+	if err != nil {
+		return nil, nil, err
+	}
+	assignment, err := tx.FindAssignmentForUpdate(ctx, assignmentID)
+	return assignment, batch, err
 }
 
 func staleAssignmentError(ctx context.Context, tx repository.AssignmentTransaction, assignment *model.BatchAssignment, batch *model.Batch) error {

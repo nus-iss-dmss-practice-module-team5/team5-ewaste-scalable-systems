@@ -54,11 +54,13 @@ func findNextActiveCollector(ctx context.Context, db *gorm.DB, recyclerOrgID, zo
 	}
 	if after != nil {
 		query = query.Clauses(clause.OrderBy{Expression: clause.Expr{
-			SQL:  "CASE WHEN scope.collector_org_id > ? OR (scope.collector_org_id = ? AND collector.user_id > ?) THEN 0 ELSE 1 END",
+			SQL:  "CASE WHEN scope.collector_org_id > ? OR (scope.collector_org_id = ? AND collector.user_id > ?) THEN 0 ELSE 1 END, scope.collector_org_id, collector.user_id, scope.id",
 			Vars: []any{after.OrganisationID, after.OrganisationID, after.UserID},
 		}})
+	} else {
+		query = query.Order("scope.collector_org_id, collector.user_id, scope.id")
 	}
-	query = query.Order("scope.collector_org_id, collector.user_id, scope.id").Clauses(clause.Locking{Strength: "UPDATE"}).Limit(1)
+	query = query.Clauses(clause.Locking{Strength: "UPDATE"}).Limit(1)
 
 	var candidate CollectorCandidate
 	err := query.Scan(&candidate).Error

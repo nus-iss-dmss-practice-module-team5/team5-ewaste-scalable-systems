@@ -21,8 +21,8 @@ vi.mock("@/lib/workflow/api", () => ({
 
 const claimed = {
   batchId: "batch-1",
-  status: "APPROVED",
-  version: 4,
+  status: "ASSIGNED",
+  version: 5,
   claimEpoch: "1",
   claimId: "claim-1",
   reservationId: "res-1",

@@ -143,6 +143,12 @@ func registerBatchWorkflowRoutes(r *gin.Engine, deps ServiceDependencies) {
 		analytics.Use(middleware.RequireAnalyticsService(deps.AnalyticsServiceToken))
 		analytics.GET("/batches/:batch_id/input", deps.AnalyticsController.Prepare)
 		analytics.POST("/batches/:batch_id/results", deps.AnalyticsController.Acknowledge)
+		// Keep the existing worker contract during service extraction. Both
+		// surfaces use service authentication, never user access tokens.
+		legacyAnalytics := r.Group("/api/v1/batches")
+		legacyAnalytics.Use(middleware.RequireAnalyticsService(deps.AnalyticsServiceToken))
+		legacyAnalytics.GET("/:batch_id/analytics-input", deps.AnalyticsController.Prepare)
+		legacyAnalytics.POST("/:batch_id/analytics-results", deps.AnalyticsController.Acknowledge)
 	}
 }
 

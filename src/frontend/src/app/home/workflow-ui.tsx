@@ -78,12 +78,15 @@ export function bannerForError(error: unknown, fallbackTestId: string) {
     error.kind === "validation"
       ? ("warning" as const)
       : ("error" as const);
-  const text =
+  let text =
     error.kind === "validation" ||
     error.kind === "conflict" ||
     error.kind === "duplicate"
       ? error.message || messageForKind(error.kind)
       : messageForKind(error.kind);
+  if (error.code === "STALE_VERSION" && error.currentState) {
+    text = `This draft is out of date. The server now shows assignment ${error.currentState.assignmentStatus} and batch ${error.currentState.batchStatus}. Review the latest assignment before sending again.`;
+  }
   return { testId: `${fallbackTestId}-${error.kind}`, tone, text };
 }
 

@@ -2,6 +2,7 @@
 
 import { useSession } from "@/lib/auth/session-context";
 import {
+  acceptAssignment,
   listAssignments,
   listBatches,
   newIdempotencyKey,
@@ -39,7 +40,7 @@ const FAILURE_REASON_LABELS: Record<FailureReason, string> = {
 const MAX_ACTUAL_ITEM_COUNT = 100000;
 const BATCH_VERSIONS_KEY = "collector-batch-versions";
 const MISSING_BATCH_VERSION =
-  "This assignment has no batch version from selection, so the update cannot be sent.";
+  "This assignment has no batch version. Refresh the assignment before sending an update.";
 
 // The handoff API compares If-Match-Version to the batch version. Selection
 // increments that version by one. The assignment's own version stays 1 and
@@ -131,6 +132,7 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
   const [verificationHash, setVerificationHash] = useState("");
   const [handoffNotes, setHandoffNotes] = useState("");
   const selectKey = useRetryKey();
+  const acceptKey = useRetryKey();
   const rejectKey = useRetryKey();
   const failKey = useRetryKey();
   const handoffKey = useRetryKey();
@@ -224,7 +226,8 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
     if (!session || !active || !rejectionReason.trim()) {
       return;
     }
-    const matchVersion = batchMatchVersion(active.batchId);
+    const matchVersion =
+      active.batchVersion ?? batchMatchVersion(active.batchId);
     if (matchVersion === null) {
       setActionError({
         testId: "collector-action-validation",
@@ -250,7 +253,7 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
       rejectKey.clear();
       setNotice({
         testId: "collector-rejected",
-        text: `Assignment rejected because ${rejectionReason.trim()}. The batch returns to APPROVED for another collector.`,
+        text: `Assignment rejected because ${rejectionReason.trim()}. The next eligible collector is assigned when available.`,
       });
       setRejectionReason("");
     });
@@ -269,7 +272,8 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
       });
       return;
     }
-    const matchVersion = batchMatchVersion(active.batchId);
+    const matchVersion =
+      active.batchVersion ?? batchMatchVersion(active.batchId);
     if (matchVersion === null) {
       setActionError({
         testId: "collector-action-validation",
@@ -296,7 +300,7 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
       failKey.clear();
       setNotice({
         testId: "collector-failed",
-        text: `Pickup failed: ${FAILURE_REASON_LABELS[failureReason]}. The batch returns to APPROVED so another collector can select it.`,
+        text: `Pickup failed: ${FAILURE_REASON_LABELS[failureReason]}. The next eligible collector is assigned when available.`,
       });
       setFailureReason("");
       setObservedDetails("");
@@ -338,7 +342,8 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
       });
       return;
     }
-    const matchVersion = batchMatchVersion(active.batchId);
+    const matchVersion =
+      active.batchVersion ?? batchMatchVersion(active.batchId);
     if (matchVersion === null) {
       setActionError({
         testId: "collector-action-validation",
@@ -380,12 +385,40 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
     });
   }
 
+  async function onAccept() {
+    if (!session || !active || active.assignmentStatus !== "PENDING") return;
+    const version = active.batchVersion ?? batchMatchVersion(active.batchId);
+    if (version === null) {
+      setActionError({
+        testId: "collector-action-validation",
+        tone: "warning",
+        text: MISSING_BATCH_VERSION,
+      });
+      return;
+    }
+    await finish(async () => {
+      await acceptAssignment(
+        session.tokens.accessToken,
+        active.assignmentId,
+        version,
+        acceptKey.keyFor(JSON.stringify([active.assignmentId, version])),
+      );
+      acceptKey.clear();
+      rememberBatchVersion(active.batchId, version + 1);
+      setNotice({
+        testId: "collector-accepted",
+        text: "Assignment accepted. You can now record the pickup outcome.",
+      });
+    });
+  }
+
   const visibleAssignments = (assignments ?? []).filter((row) =>
     history
       ? row.assignmentStatus === "COMPLETED" ||
         row.assignmentStatus === "FAILED" ||
         row.assignmentStatus === "SUPERSEDED"
-      : row.assignmentStatus === "ACCEPTED",
+      : row.assignmentStatus === "ACCEPTED" ||
+        row.assignmentStatus === "PENDING",
   );
   const loadBanner = loadError
     ? bannerForError(loadError, "collector-list")
@@ -399,7 +432,7 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
       <p className="mb-4 max-w-xl text-sm text-slate-600">
         {history
           ? "Completed, failed, and superseded assignments for your collector scope."
-          : "Choose an APPROVED batch. Selection creates an ACCEPTED assignment. Reject or a failed pickup returns the batch to APPROVED."}
+          : "Accept a pending assignment before recording a pickup. Rejection or a failed pickup moves the work to the next eligible collector when available. You can also select an available APPROVED batch."}
       </p>
       {USE_LOCAL_COLLECTOR_MOCK ? (
         <div className="mb-4">
@@ -497,7 +530,7 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
         <Banner testId="collector-assignments-empty" tone="info">
           {history
             ? "No completed or failed assignments yet."
-            : "No accepted assignments yet."}
+            : "No pending or accepted assignments yet."}
         </Banner>
       ) : null}
       {history && visibleAssignments.length > 0 ? (
@@ -524,8 +557,8 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
                       data-testid={`collector-reassignment-${row.assignmentId}`}
                       className="pb-2 text-slate-600"
                     >
-                      Failed pickup. The batch is APPROVED again and needs
-                      another collector.
+                      Failed pickup. A replacement collector is assigned when
+                      available.
                     </td>
                   </tr>
                 ) : null}
@@ -565,8 +598,18 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
         >
           <p className="text-sm text-slate-700">
             Assignment {active.assignmentId} is {active.assignmentStatus}.
-            Selection already accepts the assignment.
           </p>
+          {active.assignmentStatus === "PENDING" ? (
+            <button
+              type="button"
+              data-testid="collector-accept"
+              disabled={pending}
+              onClick={() => void onAccept()}
+              className="w-fit font-medium text-teal-800"
+            >
+              Accept assignment
+            </button>
+          ) : null}
           <form
             onSubmit={(event) => void onReject(event)}
             className="grid gap-2"
@@ -588,93 +631,100 @@ export function CollectorWork({ history = false }: { history?: boolean }) {
               Reject assignment
             </button>
           </form>
-          <form onSubmit={(event) => void onFail(event)} className="grid gap-2">
-            <h3 className="font-semibold text-slate-900">Failed pickup</h3>
-            <select
-              data-testid="collector-failure-reason"
-              aria-label="Failure reason"
-              value={failureReason}
-              onChange={(event) =>
-                setFailureReason(event.target.value as FailureReason | "")
-              }
-              className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            >
-              <option value="">Choose a failure reason</option>
-              {FAILURE_REASONS.map((reason) => (
-                <option key={reason} value={reason}>
-                  {FAILURE_REASON_LABELS[reason]}
-                </option>
-              ))}
-            </select>
-            <textarea
-              data-testid="collector-failure-details"
-              value={observedDetails}
-              onChange={(event) => setObservedDetails(event.target.value)}
-              placeholder="What you observed"
-              className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <button
-              type="submit"
-              data-testid="collector-fail"
-              disabled={pending}
-              className="w-fit text-sm font-medium text-teal-800"
-            >
-              Report failed pickup
-            </button>
-          </form>
-          <form
-            onSubmit={(event) => void onHandoff(event)}
-            className="grid gap-2"
-          >
-            <h3 className="font-semibold text-slate-900">Handoff</h3>
-            <input
-              data-testid="collector-pickup-at"
-              type="datetime-local"
-              value={pickupAt}
-              onChange={(event) => setPickupAt(event.target.value)}
-              className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <input
-              data-testid="collector-representative"
-              value={representative}
-              onChange={(event) => setRepresentative(event.target.value)}
-              placeholder="Donor representative"
-              className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <input
-              data-testid="collector-actual-count"
-              type="number"
-              min={1}
-              max={MAX_ACTUAL_ITEM_COUNT}
-              step={1}
-              value={actualCount}
-              onChange={(event) => setActualCount(event.target.value)}
-              placeholder="Actual item count"
-              className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <input
-              data-testid="collector-hash"
-              value={verificationHash}
-              onChange={(event) => setVerificationHash(event.target.value)}
-              placeholder="64-character verification hash"
-              className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <textarea
-              data-testid="collector-handoff-notes"
-              value={handoffNotes}
-              onChange={(event) => setHandoffNotes(event.target.value)}
-              placeholder="Notes"
-              className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <button
-              type="submit"
-              data-testid="collector-handoff-submit"
-              disabled={pending}
-              className="w-fit rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
-              Record handoff
-            </button>
-          </form>
+          {active.assignmentStatus === "ACCEPTED" ? (
+            <>
+              <form
+                onSubmit={(event) => void onFail(event)}
+                className="grid gap-2"
+              >
+                <h3 className="font-semibold text-slate-900">Failed pickup</h3>
+                <select
+                  data-testid="collector-failure-reason"
+                  aria-label="Failure reason"
+                  value={failureReason}
+                  onChange={(event) =>
+                    setFailureReason(event.target.value as FailureReason | "")
+                  }
+                  className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">Choose a failure reason</option>
+                  {FAILURE_REASONS.map((reason) => (
+                    <option key={reason} value={reason}>
+                      {FAILURE_REASON_LABELS[reason]}
+                    </option>
+                  ))}
+                </select>
+                <textarea
+                  data-testid="collector-failure-details"
+                  value={observedDetails}
+                  onChange={(event) => setObservedDetails(event.target.value)}
+                  placeholder="What you observed"
+                  className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <button
+                  type="submit"
+                  data-testid="collector-fail"
+                  disabled={pending}
+                  className="w-fit text-sm font-medium text-teal-800"
+                >
+                  Report failed pickup
+                </button>
+              </form>
+              <form
+                onSubmit={(event) => void onHandoff(event)}
+                className="grid gap-2"
+              >
+                <h3 className="font-semibold text-slate-900">Handoff</h3>
+                <input
+                  data-testid="collector-pickup-at"
+                  type="datetime-local"
+                  value={pickupAt}
+                  onChange={(event) => setPickupAt(event.target.value)}
+                  className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <input
+                  data-testid="collector-representative"
+                  value={representative}
+                  onChange={(event) => setRepresentative(event.target.value)}
+                  placeholder="Donor representative"
+                  className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <input
+                  data-testid="collector-actual-count"
+                  type="number"
+                  min={1}
+                  max={MAX_ACTUAL_ITEM_COUNT}
+                  step={1}
+                  value={actualCount}
+                  onChange={(event) => setActualCount(event.target.value)}
+                  placeholder="Actual item count"
+                  className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <input
+                  data-testid="collector-hash"
+                  value={verificationHash}
+                  onChange={(event) => setVerificationHash(event.target.value)}
+                  placeholder="64-character verification hash"
+                  className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <textarea
+                  data-testid="collector-handoff-notes"
+                  value={handoffNotes}
+                  onChange={(event) => setHandoffNotes(event.target.value)}
+                  placeholder="Notes"
+                  className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <button
+                  type="submit"
+                  data-testid="collector-handoff-submit"
+                  disabled={pending}
+                  className="w-fit rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  Record handoff
+                </button>
+              </form>
+            </>
+          ) : null}
         </div>
       ) : null}
     </section>
