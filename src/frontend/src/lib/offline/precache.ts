@@ -8,7 +8,8 @@ const STATIC_PREFIX = "/_next/static/";
  */
 export function collectLoadedStaticUrls(
   doc: Document = document,
-  perf: Pick<Performance, "getEntriesByType"> | undefined = globalThis.performance,
+  perf:
+    Pick<Performance, "getEntriesByType"> | undefined = globalThis.performance,
 ): string[] {
   const origin = doc.location?.origin ?? window.location.origin;
   const candidates: string[] = [];

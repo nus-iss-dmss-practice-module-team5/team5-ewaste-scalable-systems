@@ -58,6 +58,9 @@ export function withObservedNote(
   const kept =
     chars.length <= budget
       ? userText
-      : chars.slice(0, Math.max(0, budget - 1)).join("").trimEnd() + ELLIPSIS;
+      : chars
+          .slice(0, Math.max(0, budget - 1))
+          .join("")
+          .trimEnd() + ELLIPSIS;
   return `${kept}${SEPARATOR}${suffix}`;
 }

@@ -117,7 +117,10 @@ function withSync(children: ReactNode) {
 type User = ReturnType<typeof userEvent.setup>;
 
 async function fillHandoff(user: User) {
-  await user.type(screen.getByTestId("collector-pickup-at"), "2026-09-23T10:00");
+  await user.type(
+    screen.getByTestId("collector-pickup-at"),
+    "2026-09-23T10:00",
+  );
   await user.type(screen.getByTestId("collector-representative"), "Rep");
   await user.type(screen.getByTestId("collector-actual-count"), "4");
   await user.type(screen.getByTestId("collector-hash"), "a".repeat(64));
@@ -137,9 +140,9 @@ describe("collector work offline", () => {
   beforeEach(async () => {
     await resetOfflineDbForTests();
     sessionStorage.clear();
-    const actual = await vi.importActual<
-      typeof import("@/lib/offline/drafts")
-    >("@/lib/offline/drafts");
+    const actual = await vi.importActual<typeof import("@/lib/offline/drafts")>(
+      "@/lib/offline/drafts",
+    );
     saveDraftSpy.mockReset();
     saveDraftSpy.mockImplementation(actual.saveDraft);
     syncNow.mockReset();
@@ -173,7 +176,9 @@ describe("collector work offline", () => {
     sessionValue = offlineMode();
     render(<CollectorWork />);
 
-    expect(await screen.findByTestId("collector-open-asg-1")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("collector-open-asg-1"),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("collector-saved-at")).toHaveTextContent(
       `Saved on this device ${new Date("2026-10-16T08:30:00.000Z").toLocaleString()}`,
     );
@@ -200,9 +205,9 @@ describe("collector work offline", () => {
   it("says when nothing is saved on this device", async () => {
     sessionValue = offlineMode();
     render(<CollectorWork />);
-    expect(await screen.findByTestId("collector-saved-empty")).toHaveTextContent(
-      "No assignments are saved on this device",
-    );
+    expect(
+      await screen.findByTestId("collector-saved-empty"),
+    ).toHaveTextContent("No assignments are saved on this device");
     expect(
       screen.queryByTestId("collector-assignments-empty"),
     ).not.toBeInTheDocument();
@@ -251,7 +256,9 @@ describe("collector work offline", () => {
 
     expect(
       await screen.findByTestId("collector-draft-saved"),
-    ).toHaveTextContent("Saved on this phone. It will be sent when you are online.");
+    ).toHaveTextContent(
+      "Saved on this phone. It will be sent when you are online.",
+    );
     const [draft] = await listDrafts(collector.id);
     expect(draft).toMatchObject({
       command: "RECORD_HANDOFF",
@@ -296,7 +303,9 @@ describe("collector work offline", () => {
       expectedVersion: 5,
       payload: { failureReason: "DONOR_UNAVAILABLE" },
     });
-    expect(draft.command === "FAIL_PICKUP" && draft.payload.observedDetails).toMatch(
+    expect(
+      draft.command === "FAIL_PICKUP" && draft.payload.observedDetails,
+    ).toMatch(
       /^Gate locked\nObserved offline at \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$/,
     );
     expect(reportFailedPickup).not.toHaveBeenCalled();
@@ -366,7 +375,9 @@ describe("collector work offline", () => {
     expect(
       await screen.findByTestId("collector-draft-locked"),
     ).toHaveTextContent("being sent");
-    expect(screen.queryByTestId("collector-draft-saved")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("collector-draft-saved"),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("collector-representative")).toHaveValue("Rep");
   });
 
@@ -403,7 +414,9 @@ describe("collector work offline", () => {
       attempts: 1,
     });
     expect(syncNow).toHaveBeenCalledTimes(1);
-    expect(screen.queryByTestId("collector-action-network")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("collector-action-network"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the sent failed-pickup body when the online request gets no answer", async () => {
@@ -483,9 +496,7 @@ describe("collector work offline", () => {
 
     await waitFor(async () => {
       const saved = await loadAssignments(collector.id);
-      expect(
-        saved.map((row) => [row.assignmentId, row.batchVersion]),
-      ).toEqual([
+      expect(saved.map((row) => [row.assignmentId, row.batchVersion])).toEqual([
         ["asg-1", 9],
         ["asg-2", 3],
       ]);
@@ -498,7 +509,9 @@ describe("collector work offline", () => {
     vi.stubGlobal("indexedDB", undefined);
     sessionValue = onlineSession();
     render(<CollectorWork />);
-    expect(await screen.findByTestId("collector-open-asg-1")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("collector-open-asg-1"),
+    ).toBeInTheDocument();
     await waitFor(() => expect(warn).toHaveBeenCalled());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -518,7 +531,9 @@ describe("collector work offline", () => {
     // The device goes offline while the request is still out.
     sessionValue = { ...onlineSession(), isOffline: true };
     rerender(<CollectorWork />);
-    expect(await screen.findByTestId("collector-open-asg-1")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("collector-open-asg-1"),
+    ).toBeInTheDocument();
 
     failLoad({
       code: "NETWORK_ERROR",
@@ -544,7 +559,9 @@ describe("collector work offline", () => {
     // Sign-out clears the device while the list is still loading.
     await queueDeviceClear(async () => undefined);
     finishLoad(page([accepted]));
-    expect(await screen.findByTestId("collector-open-asg-1")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("collector-open-asg-1"),
+    ).toBeInTheDocument();
 
     await queueDeviceWrite(deviceWriteToken(), async () => undefined);
     expect(await loadAssignments(collector.id)).toEqual([]);
@@ -613,7 +630,10 @@ describe("collector work offline", () => {
     it("sends the corrected handoff online and removes the refused draft", async () => {
       const user = userEvent.setup();
       const rejected = await rejectedHandoff();
-      recordHandoff.mockResolvedValue({ ...accepted, assignmentStatus: "COMPLETED" });
+      recordHandoff.mockResolvedValue({
+        ...accepted,
+        assignmentStatus: "COMPLETED",
+      });
       sessionStorage.setItem(
         "collector-batch-versions",
         JSON.stringify({ "batch-1": 5 }),
@@ -627,7 +647,9 @@ describe("collector work offline", () => {
       await user.type(pickupAt, "2026-09-23T10:00");
       await user.click(screen.getByTestId("collector-handoff-submit"));
 
-      expect(await screen.findByTestId("collector-handoff")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("collector-handoff"),
+      ).toBeInTheDocument();
       expect(recordHandoff).toHaveBeenCalledWith(
         "access-token",
         "asg-1",

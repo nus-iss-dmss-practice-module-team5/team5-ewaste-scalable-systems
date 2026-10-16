@@ -8,12 +8,7 @@ import type { FailPickupCommand, HandoffCommand } from "@/lib/workflow/types";
 export type DraftCommand = "RECORD_HANDOFF" | "FAIL_PICKUP";
 
 export type DraftState =
-  | "DRAFT"
-  | "QUEUED"
-  | "SENDING"
-  | "SYNCED"
-  | "CONFLICT"
-  | "REJECTED";
+  "DRAFT" | "QUEUED" | "SENDING" | "SYNCED" | "CONFLICT" | "REJECTED";
 
 /** Final answers: the server has decided, the draft will not be sent again. */
 export const FINAL_DRAFT_STATES: readonly DraftState[] = [
@@ -100,11 +95,7 @@ export type NewDraftInput = {
 
 /** Outcome of one sync run. */
 export type SyncStopReason =
-  | "done"
-  | "offline"
-  | "needs-sign-in"
-  | "retry-later"
-  | "busy";
+  "done" | "offline" | "needs-sign-in" | "retry-later" | "busy";
 
 export type SyncReport = {
   attempted: number;

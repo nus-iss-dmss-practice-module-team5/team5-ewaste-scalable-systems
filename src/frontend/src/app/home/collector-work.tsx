@@ -149,7 +149,8 @@ function openDraftFor(
       !isFinalDraft(draft),
   );
   return open.reduce<OfflineDraft | null>(
-    (latest, draft) => (latest === null || draft.seq > latest.seq ? draft : latest),
+    (latest, draft) =>
+      latest === null || draft.seq > latest.seq ? draft : latest,
     null,
   );
 }
@@ -623,7 +624,10 @@ export function CollectorWork({
       return;
     }
     const command: FailPickupCommand = { failureReason, observedDetails };
-    const captured: CapturedCommand = { command: "FAIL_PICKUP", payload: command };
+    const captured: CapturedCommand = {
+      command: "FAIL_PICKUP",
+      payload: command,
+    };
     if (offline || !session) {
       if (await capture(active, matchVersion, captured)) {
         clearFailForm();
@@ -800,10 +804,10 @@ export function CollectorWork({
       {fixing && !history ? (
         <div className="mb-3">
           <Banner testId="collector-fix" tone="warning">
-            {commandLabel(fixing)} draft for batch {fixing.batchId} was
-            refused: {fixing.failure?.message || "the data was refused."}{" "}
-            Correct the details below and submit again; it goes as a new
-            command with a new key.
+            {commandLabel(fixing)} draft for batch {fixing.batchId} was refused:{" "}
+            {fixing.failure?.message || "the data was refused."} Correct the
+            details below and submit again; it goes as a new command with a new
+            key.
             {assignments && !active
               ? " This assignment is no longer in your accepted list."
               : ""}

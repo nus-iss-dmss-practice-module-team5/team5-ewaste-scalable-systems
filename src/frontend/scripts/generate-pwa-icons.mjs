@@ -150,5 +150,7 @@ for (const icon of ICONS) {
   const png = encodePng(icon.size, renderPixels(icon.size, icon.half));
   const target = path.join(outDir, icon.file);
   writeFileSync(target, png);
-  console.log(`wrote ${path.relative(process.cwd(), target)} (${png.length} bytes)`);
+  console.log(
+    `wrote ${path.relative(process.cwd(), target)} (${png.length} bytes)`,
+  );
 }

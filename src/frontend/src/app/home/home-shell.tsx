@@ -17,8 +17,7 @@ import { ProcessingWork } from "./processing";
 import { Banner } from "./workflow-ui";
 
 export function HomeShell() {
-  const { session, justRenewed, logout, offlineUser, isOffline } =
-    useSession();
+  const { session, justRenewed, logout, offlineUser, isOffline } = useSession();
   const sync = useOfflineSync();
   const [activeNav, setActiveNav] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);

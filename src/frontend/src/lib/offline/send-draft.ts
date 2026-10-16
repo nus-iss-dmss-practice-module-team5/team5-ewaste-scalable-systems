@@ -29,7 +29,9 @@ function noSession(): WorkflowError {
 
 export const CORRELATION_HEADER = "X-Correlation-ID";
 
-type HeadersLike = Record<string, unknown> & { get?: (name: string) => unknown };
+type HeadersLike = Record<string, unknown> & {
+  get?: (name: string) => unknown;
+};
 
 function readHeader(headers: unknown, name: string): string | undefined {
   if (typeof headers !== "object" || headers === null) {

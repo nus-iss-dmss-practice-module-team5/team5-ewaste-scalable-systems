@@ -10,9 +10,7 @@ export const DRAFTS_STORE = "drafts";
 export const META_STORE = "meta";
 
 export type OfflineStoreName =
-  | typeof ASSIGNMENTS_STORE
-  | typeof DRAFTS_STORE
-  | typeof META_STORE;
+  typeof ASSIGNMENTS_STORE | typeof DRAFTS_STORE | typeof META_STORE;
 
 /** assignments index: every saved assignment for one user. */
 export const ASSIGNMENTS_BY_USER = "userId";

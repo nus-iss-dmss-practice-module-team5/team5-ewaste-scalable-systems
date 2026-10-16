@@ -239,8 +239,7 @@ export function OfflineSyncProvider({ children }: { children: ReactNode }) {
     running.current = true;
     setSyncing(true);
     void (async () => {
-      let last: { userId: string; reason: SyncStopReason | null } | null =
-        null;
+      let last: { userId: string; reason: SyncStopReason | null } | null = null;
       try {
         do {
           followUp.current = false;

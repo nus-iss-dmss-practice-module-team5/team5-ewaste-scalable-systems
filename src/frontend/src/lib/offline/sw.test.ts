@@ -140,7 +140,10 @@ function loadWorker(
       if (!network.online) {
         throw new TypeError("Failed to fetch");
       }
-      const url = new URL(typeof input === "string" ? input : input.url, ORIGIN);
+      const url = new URL(
+        typeof input === "string" ? input : input.url,
+        ORIGIN,
+      );
       if (url.pathname.startsWith("/_next/static/")) {
         return new Response(`/* ${url.pathname} */`, {
           headers: { "Content-Type": "text/javascript" },
@@ -184,7 +187,12 @@ function loadWorker(
   async function dispatchFetch(request: FakeRequest) {
     let responded: Promise<Response> | undefined;
     listeners.fetch({
-      request: { method: "GET", mode: "cors", headers: new Headers(), ...request },
+      request: {
+        method: "GET",
+        mode: "cors",
+        headers: new Headers(),
+        ...request,
+      },
       respondWith: (promise: Promise<Response>) => {
         responded = promise;
       },
@@ -228,7 +236,9 @@ describe("sw.js routing", () => {
   });
 
   it("caches Next static assets and shell assets", () => {
-    expect(route({ url: url("/_next/static/chunks/main-1.js") })).toBe("static");
+    expect(route({ url: url("/_next/static/chunks/main-1.js") })).toBe(
+      "static",
+    );
     expect(route({ url: url("/_next/static/css/app-1.css") })).toBe("static");
     expect(route({ url: url("/manifest.webmanifest") })).toBe("shell-asset");
     expect(route({ url: url("/icons/icon-192.png") })).toBe("shell-asset");
@@ -261,11 +271,15 @@ describe("sw.js routing", () => {
       }),
     ).toBeNull();
     expect(route({ url: url("/home?_rsc=abc12") })).toBeNull();
-    expect(route({ url: url("/login?_rsc=abc12"), mode: "navigate" })).toBeNull();
+    expect(
+      route({ url: url("/login?_rsc=abc12"), mode: "navigate" }),
+    ).toBeNull();
   });
 
   it("never touches non-GET requests", () => {
-    expect(route({ url: url("/home"), method: "POST", mode: "navigate" })).toBeNull();
+    expect(
+      route({ url: url("/home"), method: "POST", mode: "navigate" }),
+    ).toBeNull();
     expect(
       route({ url: url("/_next/static/chunks/main-1.js"), method: "HEAD" }),
     ).toBeNull();
@@ -288,7 +302,10 @@ describe("sw.js cache naming", () => {
     const { api } = loadWorker({ swUrl: `${ORIGIN}/sw.js?v=abc123` });
 
     expect(api.buildId).toBe("abc123");
-    expect(api.caches).toEqual({ shell: "shell-abc123", static: "static-abc123" });
+    expect(api.caches).toEqual({
+      shell: "shell-abc123",
+      static: "static-abc123",
+    });
   });
 
   it("falls back to 'dev' without a build id", () => {
@@ -579,7 +596,10 @@ describe("sw.js PRECACHE_STATIC message", () => {
   it("ignores other messages", async () => {
     const worker = loadWorker();
 
-    await worker.message({ type: "SOMETHING_ELSE", urls: ["/_next/static/a.js"] });
+    await worker.message({
+      type: "SOMETHING_ELSE",
+      urls: ["/_next/static/a.js"],
+    });
     await worker.message(null);
 
     expect(await worker.caches.keys()).toEqual([]);

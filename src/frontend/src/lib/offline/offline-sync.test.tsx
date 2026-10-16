@@ -387,7 +387,13 @@ describe("OfflineSyncProvider", () => {
     function unreachable() {
       sessionMock.renew = vi.fn(async () => "unreachable" as const);
       send.mockRejectedValueOnce(
-        new WorkflowError("expired", "session", "AUTH_INVALID_SESSION", "c", 401),
+        new WorkflowError(
+          "expired",
+          "session",
+          "AUTH_INVALID_SESSION",
+          "c",
+          401,
+        ),
       );
     }
 

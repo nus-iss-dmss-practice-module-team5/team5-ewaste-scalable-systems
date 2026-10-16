@@ -127,9 +127,7 @@ export function DraftsView({ onFix }: DraftsViewProps = {}) {
         <DraftConflict
           draft={opened}
           onDiscard={
-            canDiscard(opened)
-              ? () => void discard(opened.draftId)
-              : undefined
+            canDiscard(opened) ? () => void discard(opened.draftId) : undefined
           }
           onClose={() => setOpenId(null)}
         />
@@ -148,8 +146,8 @@ export function DraftsView({ onFix }: DraftsViewProps = {}) {
       {!signedIn && toConfirm.length > 0 ? (
         <div className="mb-4 max-w-xl">
           <Banner testId="collector-drafts-sign-in" tone="info">
-            Sign in to confirm and send drafts saved while you were signed
-            out. They stay on this phone until then.
+            Sign in to confirm and send drafts saved while you were signed out.
+            They stay on this phone until then.
           </Banner>
         </div>
       ) : null}

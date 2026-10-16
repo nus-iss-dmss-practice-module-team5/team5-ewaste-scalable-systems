@@ -27,9 +27,7 @@ const T0 = new Date("2026-10-16T09:30:00.000Z");
 const HOUR = 60 * 60 * 1000;
 const at = (ms: number) => new Date(T0.getTime() + ms);
 
-function handoff(
-  overrides: Partial<NewDraftInput> = {},
-): NewDraftInput {
+function handoff(overrides: Partial<NewDraftInput> = {}): NewDraftInput {
   return {
     userId: USER,
     assignmentId: "ASG-1",
@@ -47,9 +45,7 @@ function handoff(
   } as NewDraftInput;
 }
 
-function failPickup(
-  overrides: Partial<NewDraftInput> = {},
-): NewDraftInput {
+function failPickup(overrides: Partial<NewDraftInput> = {}): NewDraftInput {
   return {
     userId: USER,
     assignmentId: "ASG-1",
@@ -57,7 +53,10 @@ function failPickup(
     expectedVersion: 3,
     capturedSignedOut: false,
     command: "FAIL_PICKUP",
-    payload: { failureReason: "DONOR_UNAVAILABLE", observedDetails: "No one home" },
+    payload: {
+      failureReason: "DONOR_UNAVAILABLE",
+      observedDetails: "No one home",
+    },
     ...overrides,
   } as NewDraftInput;
 }
@@ -115,7 +114,9 @@ describe("offline drafts", () => {
 
     it("allocates a monotonic seq across users and assignments", async () => {
       const a = await saveDraft(handoff({ assignmentId: "ASG-1" }));
-      const b = await saveDraft(handoff({ assignmentId: "ASG-2", userId: OTHER }));
+      const b = await saveDraft(
+        handoff({ assignmentId: "ASG-2", userId: OTHER }),
+      );
       const c = await saveDraft(handoff({ assignmentId: "ASG-3" }));
       expect([a.seq, b.seq, c.seq]).toEqual([1, 2, 3]);
       expect(await getMeta<number>("seq")).toBe(3);
@@ -158,7 +159,8 @@ describe("offline drafts", () => {
       expect(draft.command).toBe("FAIL_PICKUP");
       expect(draft.payload).toEqual({
         failureReason: "DONOR_UNAVAILABLE",
-        observedDetails: "No one home\nObserved offline at 2026-10-16 09:30 UTC",
+        observedDetails:
+          "No one home\nObserved offline at 2026-10-16 09:30 UTC",
       });
       // The caller's object is not changed.
       expect(input.payload).toEqual({
@@ -231,7 +233,10 @@ describe("offline drafts", () => {
     it("does not replace another user's draft or a final draft", async () => {
       const other = await saveDraft(handoff({ userId: OTHER }));
       const mine = await saveDraft(handoff());
-      await putDraft({ ...(await markSending(mine.draftId)), state: "REJECTED" });
+      await putDraft({
+        ...(await markSending(mine.draftId)),
+        state: "REJECTED",
+      });
       const again = await saveDraft(handoff());
       expect(await getDraft(other.draftId)).not.toBeNull();
       expect((await getDraft(mine.draftId))?.state).toBe("REJECTED");
@@ -267,7 +272,9 @@ describe("offline drafts", () => {
   describe("sending", () => {
     it("lists QUEUED and leftover SENDING drafts in seq order", async () => {
       const a = await saveDraft(handoff({ assignmentId: "ASG-1" }));
-      await saveDraft(handoff({ assignmentId: "ASG-2", capturedSignedOut: true }));
+      await saveDraft(
+        handoff({ assignmentId: "ASG-2", capturedSignedOut: true }),
+      );
       const c = await saveDraft(handoff({ assignmentId: "ASG-3" }));
       const d = await saveDraft(handoff({ assignmentId: "ASG-4" }));
       await saveDraft(handoff({ assignmentId: "ASG-5", userId: OTHER }));
@@ -455,7 +462,11 @@ describe("offline drafts", () => {
       });
       const queued = await saveDraft(handoff({ assignmentId: "ASG-5" }));
       const signedOut = await saveDraft(
-        handoff({ assignmentId: "ASG-6", capturedSignedOut: true, userId: OTHER }),
+        handoff({
+          assignmentId: "ASG-6",
+          capturedSignedOut: true,
+          userId: OTHER,
+        }),
       );
 
       expect(await purgeSyncedDrafts(at(24 * HOUR))).toBe(0);
@@ -472,7 +483,9 @@ describe("offline drafts", () => {
   describe("per-user isolation", () => {
     it("lists, counts and finds only the user's own drafts", async () => {
       await saveDraft(handoff({ assignmentId: "ASG-1" }));
-      await saveDraft(handoff({ assignmentId: "ASG-2", capturedSignedOut: true }));
+      await saveDraft(
+        handoff({ assignmentId: "ASG-2", capturedSignedOut: true }),
+      );
       const synced = await saveDraft(handoff({ assignmentId: "ASG-3" }));
       await syncedDraft(synced, T0);
       await saveDraft(handoff({ assignmentId: "ASG-1", userId: OTHER }));
@@ -587,11 +600,14 @@ describe("offline drafts", () => {
 
   it("stores the seq counter in meta", async () => {
     await saveDraft(handoff());
-    const raw = await withTransaction(META_STORE, "readonly", (t) =>
-      new Promise((resolve) => {
-        const request = t.objectStore(META_STORE).get("seq");
-        request.onsuccess = () => resolve(request.result);
-      }),
+    const raw = await withTransaction(
+      META_STORE,
+      "readonly",
+      (t) =>
+        new Promise((resolve) => {
+          const request = t.objectStore(META_STORE).get("seq");
+          request.onsuccess = () => resolve(request.result);
+        }),
     );
     expect(raw).toBe(1);
   });

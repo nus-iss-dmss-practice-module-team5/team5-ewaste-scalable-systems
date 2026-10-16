@@ -114,7 +114,9 @@ describe("createDraftSender", () => {
     post.mockResolvedValueOnce({
       data: { data: assignmentWire },
       headers: new AxiosHeaders({ "x-correlation-id": "corr-200" }),
-      config: { headers: new AxiosHeaders({ "X-Correlation-ID": "corr-sent" }) },
+      config: {
+        headers: new AxiosHeaders({ "X-Correlation-ID": "corr-sent" }),
+      },
     });
     const send = createDraftSender(() => "token-1");
     await expect(send(handoff)).resolves.toEqual({

@@ -117,7 +117,8 @@
   /** /_next/static/ references inside a shell document (scripts, CSS, fonts). */
   function extractStaticUrls(html, origin) {
     // Keep any absolute origin in the match so CDN URLs are filtered out.
-    var pattern = /(?:https?:\/\/[^"'\s<>\\/]+)?\/_next\/static\/[^"'\s<>\\)]+/g;
+    var pattern =
+      /(?:https?:\/\/[^"'\s<>\\/]+)?\/_next\/static\/[^"'\s<>\\)]+/g;
     var matches = String(html).match(pattern) || [];
     return filterStaticUrls(matches, origin);
   }
@@ -147,19 +148,22 @@
     return caches.open(CACHES.static).then(function (cache) {
       return Promise.all(
         wanted.map(function (href) {
-          return cache.match(href).then(function (hit) {
-            if (hit) return false;
-            return fetch(href, { credentials: "same-origin" }).then(
-              function (response) {
-                if (!response.ok) return false;
-                return cache.put(href, response).then(function () {
-                  return true;
-                });
-              },
-            );
-          }).catch(function () {
-            return false;
-          });
+          return cache
+            .match(href)
+            .then(function (hit) {
+              if (hit) return false;
+              return fetch(href, { credentials: "same-origin" }).then(
+                function (response) {
+                  if (!response.ok) return false;
+                  return cache.put(href, response).then(function () {
+                    return true;
+                  });
+                },
+              );
+            })
+            .catch(function () {
+              return false;
+            });
         }),
       ).then(function (added) {
         return added.filter(Boolean).length;
@@ -176,18 +180,25 @@
         return Promise.all(
           paths.map(function (path) {
             var href = absolute(path);
-            return fetch(new Request(href, {
-              cache: "reload",
-              credentials: "same-origin",
-            })).then(function (response) {
+            return fetch(
+              new Request(href, {
+                cache: "reload",
+                credentials: "same-origin",
+              }),
+            ).then(function (response) {
               if (!response.ok) {
-                throw new Error("precache " + path + ": HTTP " + response.status);
+                throw new Error(
+                  "precache " + path + ": HTTP " + response.status,
+                );
               }
               var isPage = SHELL_PAGES.indexOf(path) !== -1;
               var text = isPage
-                ? response.clone().text().then(function (body) {
-                    shellHtml.push(body);
-                  })
+                ? response
+                    .clone()
+                    .text()
+                    .then(function (body) {
+                      shellHtml.push(body);
+                    })
                 : Promise.resolve();
               return text
                 .then(function () {

@@ -83,9 +83,7 @@ export async function getSavedAssignment(
     "readonly",
     (transaction) =>
       requestToPromise<SavedAssignment | undefined>(
-        transaction
-          .objectStore(ASSIGNMENTS_STORE)
-          .get([userId, assignmentId]),
+        transaction.objectStore(ASSIGNMENTS_STORE).get([userId, assignmentId]),
       ),
   );
   return record ?? null;

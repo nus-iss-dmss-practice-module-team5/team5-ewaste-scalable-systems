@@ -113,11 +113,14 @@ describe("offline database", () => {
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
-    const stored = await withTransaction(META_STORE, "readonly", (transaction) =>
-      new Promise((resolve) => {
-        const request = transaction.objectStore(META_STORE).get("key");
-        request.onsuccess = () => resolve(request.result);
-      }),
+    const stored = await withTransaction(
+      META_STORE,
+      "readonly",
+      (transaction) =>
+        new Promise((resolve) => {
+          const request = transaction.objectStore(META_STORE).get("key");
+          request.onsuccess = () => resolve(request.result);
+        }),
     );
     expect(stored).toBeUndefined();
   });

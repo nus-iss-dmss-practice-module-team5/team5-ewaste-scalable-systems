@@ -11,7 +11,11 @@ function resourceEntries(names: string[]) {
   };
 }
 
-function addElement(tag: "script" | "link", attr: "src" | "href", value: string) {
+function addElement(
+  tag: "script" | "link",
+  attr: "src" | "href",
+  value: string,
+) {
   const element = document.createElement(tag);
   element.setAttribute(attr, value);
   document.head.appendChild(element);
