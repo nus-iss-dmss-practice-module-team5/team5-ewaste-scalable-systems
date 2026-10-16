@@ -1,3 +1,4 @@
+import type { AssignmentCurrentState } from "@/lib/workflow/errors";
 import type { FailPickupCommand, HandoffCommand } from "@/lib/workflow/types";
 
 /**
@@ -30,7 +31,15 @@ export type DraftFailure = {
   code: string;
   message?: string;
   correlationId: string;
-  /** Current state from GET /api/v1/assignments/{id} after a conflict. */
+  /**
+   * Authoritative snapshot sent with the 409 STALE_VERSION itself. Preferred
+   * over `current`, which a later read may no longer match.
+   */
+  serverState?: AssignmentCurrentState;
+  /**
+   * Current state from GET /api/v1/assignments/{id} after a conflict; the
+   * fallback when the answer carried no `serverState`.
+   */
   current?: { assignmentStatus: string; updatedAt: string };
   /**
    * STALE_VERSION on a draft first sent more than 24h ago: the server's replay

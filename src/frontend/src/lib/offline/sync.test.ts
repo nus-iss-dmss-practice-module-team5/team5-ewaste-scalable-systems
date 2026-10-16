@@ -359,7 +359,7 @@ describe("runSync", () => {
     expect(t.get("draft-1").state).toBe("QUEUED");
   });
 
-  it("marks STALE_VERSION a conflict with the current state and continues", async () => {
+  it("falls back to reading the current state on a STALE_VERSION without a snapshot", async () => {
     const t = setup([draft(1), draft(2)], {
       "draft-1": [wfError(409, "STALE_VERSION")],
       "draft-2": [ok()],
@@ -386,6 +386,44 @@ describe("runSync", () => {
       },
     });
     expect(t.get("draft-1").failure?.possiblyApplied).toBeUndefined();
+  });
+
+  it("keeps the STALE_VERSION snapshot without a later read", async () => {
+    const currentState = {
+      assignmentId: "asg-1",
+      assignmentStatus: "SUPERSEDED",
+      assignmentVersion: 4,
+      batchId: "batch-1",
+      batchStatus: "ASSIGNED",
+      batchVersion: 9,
+      currentAssignmentId: "asg-9",
+    };
+    const stale = new WorkflowError(
+      "changed",
+      "conflict",
+      "STALE_VERSION",
+      "corr-stale",
+      409,
+      currentState,
+    );
+    const t = setup([draft(1), draft(2)], {
+      "draft-1": [stale],
+      "draft-2": [ok()],
+    });
+    const report = await runSync(t.deps);
+
+    expect(report).toMatchObject({ conflicts: 1, synced: 1 });
+    expect(t.deps.getCurrent).not.toHaveBeenCalled();
+    expect(t.get("draft-1")).toMatchObject({
+      state: "CONFLICT",
+      failure: {
+        httpStatus: 409,
+        code: "STALE_VERSION",
+        correlationId: "corr-stale",
+        serverState: currentState,
+      },
+    });
+    expect(t.get("draft-1").failure?.current).toBeUndefined();
   });
 
   it("keeps the conflict when fetching the current state fails", async () => {

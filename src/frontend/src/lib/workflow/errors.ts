@@ -11,11 +11,28 @@ export type WorkflowErrorKind =
   | "session"
   | "error";
 
+/**
+ * Authoritative server state sent with a 409 STALE_VERSION on an assignment
+ * command (`current_state` in the error body), read in the same transaction
+ * that refused the write.
+ */
+export type AssignmentCurrentState = {
+  assignmentId: string;
+  assignmentStatus: string;
+  assignmentVersion: number;
+  batchId: string;
+  batchStatus: string;
+  batchVersion: number;
+  /** The batch's live assignment, when it is no longer this one. */
+  currentAssignmentId?: string;
+};
+
 export class WorkflowError extends Error {
   readonly kind: WorkflowErrorKind;
   readonly code: string;
   readonly correlationId: string;
   readonly status?: number;
+  readonly currentState?: AssignmentCurrentState;
 
   constructor(
     message: string,
@@ -23,6 +40,7 @@ export class WorkflowError extends Error {
     code: string,
     correlationId: string,
     status?: number,
+    currentState?: AssignmentCurrentState,
   ) {
     super(message);
     this.name = "WorkflowError";
@@ -30,6 +48,7 @@ export class WorkflowError extends Error {
     this.code = code;
     this.correlationId = correlationId;
     this.status = status;
+    this.currentState = currentState;
   }
 }
 
@@ -63,10 +82,49 @@ function kindForStatus(status: number, code: string): WorkflowErrorKind {
   return "error";
 }
 
+/** `current_state` from an error body; undefined unless it is complete. */
+function readCurrentState(value: unknown): AssignmentCurrentState | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const {
+    assignment_id: assignmentId,
+    assignment_status: assignmentStatus,
+    assignment_version: assignmentVersion,
+    batch_id: batchId,
+    batch_status: batchStatus,
+    batch_version: batchVersion,
+    current_assignment_id: currentAssignmentId,
+  } = value;
+  if (
+    typeof assignmentId !== "string" ||
+    typeof assignmentStatus !== "string" ||
+    typeof assignmentVersion !== "number" ||
+    typeof batchId !== "string" ||
+    typeof batchStatus !== "string" ||
+    typeof batchVersion !== "number"
+  ) {
+    return undefined;
+  }
+  const state: AssignmentCurrentState = {
+    assignmentId,
+    assignmentStatus,
+    assignmentVersion,
+    batchId,
+    batchStatus,
+    batchVersion,
+  };
+  if (typeof currentAssignmentId === "string" && currentAssignmentId !== "") {
+    state.currentAssignmentId = currentAssignmentId;
+  }
+  return state;
+}
+
 function readErrorBody(data: unknown): {
   code: string;
   message: string;
   correlationId: string;
+  currentState?: AssignmentCurrentState;
 } {
   if (!isRecord(data)) {
     return {
@@ -82,7 +140,10 @@ function readErrorBody(data: unknown): {
     typeof data.correlation_id === "string"
       ? data.correlation_id
       : "corr-unknown";
-  return { code, message, correlationId };
+  const currentState = readCurrentState(data.current_state);
+  return currentState
+    ? { code, message, correlationId, currentState }
+    : { code, message, correlationId };
 }
 
 export function toWorkflowError(error: unknown): WorkflowError {
@@ -105,6 +166,7 @@ export function toWorkflowError(error: unknown): WorkflowError {
       body.code,
       body.correlationId,
       error.response.status,
+      body.currentState,
     );
   }
   return new WorkflowError(

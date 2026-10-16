@@ -14,7 +14,10 @@ export type SyncAction =
   | { kind: "retry"; transient: boolean; failure: DraftFailure }
   /** 401: renew the session once, then resend. */
   | { kind: "renew"; failure: DraftFailure }
-  /** Final answer: CONFLICT. `fetchCurrent` asks for the current assignment. */
+  /**
+   * Final answer: CONFLICT. `fetchCurrent` asks for the current assignment
+   * (false when the answer already carries `failure.serverState`).
+   */
   | { kind: "conflict"; fetchCurrent: boolean; failure: DraftFailure }
   /** 409 CONFLICT: resend up to 3 times with the same key, then CONFLICT. */
   | { kind: "conflict-retry"; failure: DraftFailure }
@@ -30,12 +33,16 @@ export const NOT_ASSIGNED_MESSAGE =
 const TRANSIENT_STATUSES = new Set([500, 502, 503, 504]);
 
 function failureOf(error: WorkflowError, code = error.code): DraftFailure {
-  return {
+  const failure: DraftFailure = {
     httpStatus: error.status ?? 0,
     code,
     correlationId: error.correlationId,
     message: error.message,
   };
+  if (error.currentState) {
+    failure.serverState = error.currentState;
+  }
+  return failure;
 }
 
 export function classifyAnswer(error: unknown): SyncAction {
@@ -86,7 +93,13 @@ export function classifyAnswer(error: unknown): SyncAction {
   if (status === 409) {
     switch (error.code) {
       case "STALE_VERSION":
-        return { kind: "conflict", fetchCurrent: true, failure };
+        // The answer's own snapshot is authoritative; read the assignment
+        // again only when the server did not send one.
+        return {
+          kind: "conflict",
+          fetchCurrent: !failure.serverState,
+          failure,
+        };
       case "IDEMPOTENCY_CONFLICT":
         return { kind: "conflict", fetchCurrent: false, failure };
       case "CONFLICT":

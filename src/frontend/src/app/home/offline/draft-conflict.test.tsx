@@ -125,6 +125,64 @@ describe("DraftConflict", () => {
     );
   });
 
+  it("shows the server's STALE_VERSION snapshot over a fetched state", () => {
+    const draft = handoffDraft({
+      state: "CONFLICT",
+      failure: failure({
+        serverState: {
+          assignmentId: "asg-1",
+          assignmentStatus: "SUPERSEDED",
+          assignmentVersion: 4,
+          batchId: "batch-1",
+          batchStatus: "ASSIGNED",
+          batchVersion: 9,
+          currentAssignmentId: "asg-2",
+        },
+        current: {
+          assignmentStatus: "COLLECTED",
+          updatedAt: "2026-10-16T10:00:00.000Z",
+        },
+      }),
+    });
+    renderConflict(draft);
+
+    const current = screen.getByTestId("collector-conflict-current");
+    expect(current).not.toHaveTextContent("COLLECTED");
+    expect(
+      screen.getByTestId("collector-conflict-current-assignment"),
+    ).toHaveTextContent("Assignment is SUPERSEDED · version 4");
+    expect(
+      screen.getByTestId("collector-conflict-current-batch"),
+    ).toHaveTextContent(
+      `Batch batch-1 is ASSIGNED · version 9 (your draft expected version ${draft.expectedVersion})`,
+    );
+    expect(
+      screen.getByTestId("collector-conflict-current-reassigned"),
+    ).toHaveTextContent("The batch is now on assignment asg-2");
+  });
+
+  it("omits the reassignment line while the batch is on this assignment", () => {
+    renderConflict(
+      handoffDraft({
+        state: "CONFLICT",
+        failure: failure({
+          serverState: {
+            assignmentId: "asg-1",
+            assignmentStatus: "IN_PROGRESS",
+            assignmentVersion: 2,
+            batchId: "batch-1",
+            batchStatus: "COLLECTING",
+            batchVersion: 7,
+            currentAssignmentId: "asg-1",
+          },
+        }),
+      }),
+    );
+    expect(
+      screen.queryByTestId("collector-conflict-current-reassigned"),
+    ).toBeNull();
+  });
+
   it("says when the current state is unavailable", () => {
     renderConflict();
     expect(screen.getByTestId("collector-conflict-current")).toHaveTextContent(

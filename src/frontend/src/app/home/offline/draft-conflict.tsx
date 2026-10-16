@@ -1,6 +1,7 @@
 "use client";
 
 import type { DraftFailure, OfflineDraft } from "@/lib/offline/types";
+import type { AssignmentCurrentState } from "@/lib/workflow/errors";
 import { formatWhen } from "../workflow-ui";
 import { commandLabel, DiscardControl, PayloadSummary } from "./draft-parts";
 
@@ -25,6 +26,40 @@ export function conflictReason(failure?: DraftFailure): string {
     default:
       return failure?.message || "The server did not apply this draft.";
   }
+}
+
+/** The snapshot the server sent with its STALE_VERSION answer. */
+function ServerState({
+  draft,
+  state,
+}: {
+  draft: OfflineDraft;
+  state: AssignmentCurrentState;
+}) {
+  const reassigned =
+    state.currentAssignmentId !== undefined &&
+    state.currentAssignmentId !== state.assignmentId;
+  return (
+    <ul
+      data-testid="collector-conflict-current"
+      className="grid gap-1 break-all text-sm text-slate-700"
+    >
+      <li data-testid="collector-conflict-current-assignment">
+        Assignment is {state.assignmentStatus} · version{" "}
+        {state.assignmentVersion}
+      </li>
+      <li data-testid="collector-conflict-current-batch">
+        Batch {state.batchId} is {state.batchStatus} · version{" "}
+        {state.batchVersion} (your draft expected version{" "}
+        {draft.expectedVersion})
+      </li>
+      {reassigned ? (
+        <li data-testid="collector-conflict-current-reassigned">
+          The batch is now on assignment {state.currentAssignmentId}
+        </li>
+      ) : null}
+    </ul>
+  );
 }
 
 /**
@@ -107,14 +142,18 @@ export function DraftConflict({
 
       <div className="grid gap-1">
         <h3 className="font-semibold text-slate-900">Current state</h3>
-        <p
-          data-testid="collector-conflict-current"
-          className="text-sm text-slate-700"
-        >
-          {failure?.current
-            ? `Assignment is ${failure.current.assignmentStatus} · updated ${formatWhen(failure.current.updatedAt)}`
-            : "Current state unavailable"}
-        </p>
+        {failure?.serverState ? (
+          <ServerState draft={draft} state={failure.serverState} />
+        ) : (
+          <p
+            data-testid="collector-conflict-current"
+            className="text-sm text-slate-700"
+          >
+            {failure?.current
+              ? `Assignment is ${failure.current.assignmentStatus} · updated ${formatWhen(failure.current.updatedAt)}`
+              : "Current state unavailable"}
+          </p>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-4">

@@ -53,6 +53,37 @@ describe("classifyAnswer", () => {
     });
   });
 
+  it("keeps a STALE_VERSION snapshot and skips the fetch", () => {
+    const currentState = {
+      assignmentId: "asg-1",
+      assignmentStatus: "SUPERSEDED",
+      assignmentVersion: 4,
+      batchId: "batch-1",
+      batchStatus: "ASSIGNED",
+      batchVersion: 9,
+      currentAssignmentId: "asg-2",
+    };
+    const error = new WorkflowError(
+      "changed",
+      "conflict",
+      "STALE_VERSION",
+      "corr-stale",
+      409,
+      currentState,
+    );
+    expect(classifyAnswer(error)).toEqual({
+      kind: "conflict",
+      fetchCurrent: false,
+      failure: {
+        httpStatus: 409,
+        code: "STALE_VERSION",
+        correlationId: "corr-stale",
+        message: "changed",
+        serverState: currentState,
+      },
+    });
+  });
+
   it("retries 409 CONFLICT before giving up", () => {
     expect(classifyAnswer(err(409, "CONFLICT")).kind).toBe("conflict-retry");
   });
