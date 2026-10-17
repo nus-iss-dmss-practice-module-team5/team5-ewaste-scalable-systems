@@ -162,7 +162,7 @@ if [[ -z "$ENTRY_URL" ]] && [[ -n "$TARGET_ENV" ]] && command -v az >/dev/null 2
   [[ -z "$BATCH_FQDN" ]] && BATCH_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-api" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
   [[ -z "$CLAIM_FQDN" ]] && CLAIM_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-claim" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
   [[ -z "$CUSTODY_FQDN" ]] && CUSTODY_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-custody" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
-  [[ -z "$ANALYTICS_FQDN" ]] && ANALYTICS_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-analytics" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+  [[ -z "$ANALYTICS_FQDN" ]] && ANALYTICS_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-analytic" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
 fi
 
 # Dry Run / Offline Configuration Validation Mode

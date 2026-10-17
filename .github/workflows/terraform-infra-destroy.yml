@@ -103,8 +103,11 @@ jobs:
 
           # Azure Container Apps Environment cannot be deleted while containing apps.
           # Pre-delete all three container apps to prevent Terraform deletion deadlocks.
-          for APP_SUFFIX in api ui analytics; do
+          for APP_SUFFIX in api ui analytics matcher; do
             APP_NAME="aca-ewastescalable-${TARGET_ENV}-${APP_SUFFIX}"
+            if [ "$APP_SUFFIX" == "analytics" ]; then
+              APP_NAME="aca-ewastescalable-${TARGET_ENV}-analytic"
+            fi
             if az containerapp show --name "$APP_NAME" --resource-group "$RG" >/dev/null 2>&1; then
               echo "Deleting container app: ${APP_NAME}..."
               az containerapp delete --name "$APP_NAME" --resource-group "$RG" --yes || true

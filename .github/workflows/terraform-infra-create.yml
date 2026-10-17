@@ -278,6 +278,9 @@ jobs:
           for APP_SUFFIX in api ui analytics; do
             RESOURCE_ADDR="azurerm_container_app.${APP_SUFFIX}"
             APP_NAME="aca-ewastescalable-${TARGET_ENV}-${APP_SUFFIX}"
+            if [ "$APP_SUFFIX" == "analytics" ]; then
+              APP_NAME="aca-ewastescalable-${TARGET_ENV}-analytic"
+            fi
 
             if terraform state show "$RESOURCE_ADDR" &>/dev/null; then
               echo "[import] $RESOURCE_ADDR already in state — skipping."

@@ -15,8 +15,8 @@ In our decoupled microservices architecture, six distinct microservices and work
 3. **Batch Workflow Service:** `aca-ewastescalable-prod-api` (Go 1.23 API)
 4. **Claim Logistics Service:** `aca-ewastescalable-prod-claim` (Go 1.23 API)
 5. **Custody & Verification Service:** `aca-ewastescalable-prod-custody` (Go 1.23 API)
-6. **Matching Worker Service:** `aca-ewastescalable-prod-matching-worker` (Python 3.12 Headless Worker)
-7. **Analytics Worker Service:** `aca-ewastescalable-prod-analytics` (Python 3.12 Worker)
+6. **Matching Worker Service:** `aca-ewastescalable-prod-matcher` (Python 3.12 Headless Worker)
+7. **Analytics Worker Service:** `aca-ewastescalable-prod-analytic` (Python 3.12 Worker)
 
 ### Security Boundary & Attack Surface Reduction
 

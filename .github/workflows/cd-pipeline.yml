@@ -506,7 +506,7 @@ jobs:
           export TARGET_ENV="${{ needs.resolve-environment.outputs.environment }}"
           export RG="${{ needs.resolve-environment.outputs.resource_group }}"
           export MATCHER_IMAGE="${{ env.ANALYTICS_IMMUTABLE_DIGEST }}"
-          APP_NAME="aca-ewastescalable-${TARGET_ENV}-analytics"
+          APP_NAME="aca-ewastescalable-${TARGET_ENV}-analytic"
 
           echo "Configuring matcher integration and updating $APP_NAME in $RG..."
           echo "Target Image Digest: $MATCHER_IMAGE"

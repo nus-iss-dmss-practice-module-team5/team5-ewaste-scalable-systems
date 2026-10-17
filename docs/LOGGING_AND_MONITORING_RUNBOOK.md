@@ -10,13 +10,13 @@ This document is the **authoritative operational reference guide** for querying,
 
 All Container Apps write JSON logs to `stdout`/`stderr`, which are ingested into the shared **Azure Log Analytics Workspace**:
 
-| Resource                    | Value in Dev (`dev`)               | Value in Staging (`stg`)           | Value in Production (`prod`)        |
-| :-------------------------- | :--------------------------------- | :--------------------------------- | :---------------------------------- |
-| **Resource Group**          | `rg-ewastescalable-dev`            | `rg-ewastescalable-stg`            | `rg-ewastescalable-prod`            |
-| **Log Analytics Workspace** | `log-ewastescalable-centralized`   | `log-ewastescalable-centralized`   | `log-ewastescalable-centralized`    |
-| **API Container App**       | `aca-ewastescalable-dev-api`       | `aca-ewastescalable-stg-api`       | `aca-ewastescalable-prod-api`       |
-| **Analytics Worker App**    | `aca-ewastescalable-dev-analytics` | `aca-ewastescalable-stg-analytics` | `aca-ewastescalable-prod-analytics` |
-| **Frontend UI App**         | `aca-ewastescalable-dev-ui`        | `aca-ewastescalable-stg-ui`        | `aca-ewastescalable-prod-ui`        |
+| Resource                    | Value in Dev (`dev`)              | Value in Staging (`stg`)          | Value in Production (`prod`)       |
+| :-------------------------- | :-------------------------------- | :-------------------------------- | :--------------------------------- |
+| **Resource Group**          | `rg-ewastescalable-dev`           | `rg-ewastescalable-stg`           | `rg-ewastescalable-prod`           |
+| **Log Analytics Workspace** | `log-ewastescalable-centralized`  | `log-ewastescalable-centralized`  | `log-ewastescalable-centralized`   |
+| **API Container App**       | `aca-ewastescalable-dev-api`      | `aca-ewastescalable-stg-api`      | `aca-ewastescalable-prod-api`      |
+| **Analytics Worker App**    | `aca-ewastescalable-dev-analytic` | `aca-ewastescalable-stg-analytic` | `aca-ewastescalable-prod-analytic` |
+| **Frontend UI App**         | `aca-ewastescalable-dev-ui`       | `aca-ewastescalable-stg-ui`       | `aca-ewastescalable-prod-ui`       |
 
 ### 1.1 Access via Azure Portal
 
@@ -39,7 +39,7 @@ az containerapp logs show \
 
 # Stream Python Analytics Worker logs
 az containerapp logs show \
-  --name aca-ewastescalable-dev-analytics \
+  --name aca-ewastescalable-dev-analytic \
   --resource-group rg-ewastescalable-dev \
   --follow \
   --format text

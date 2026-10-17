@@ -11,7 +11,7 @@
 - **Backend API Gateway:** `https://aca-ewastescalable-dev-api.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
   - Health Endpoint: `/healthz`
   - Login Endpoint: `/api/v1/auth/login`
-- **Analytics & Matching Worker:** `https://aca-ewastescalable-dev-analytics.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
+- **Analytics & Matching Worker:** `https://aca-ewastescalable-dev-analytic.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
   - Readiness Endpoint: `/readyz`
 
 ---
@@ -238,7 +238,7 @@ az containerapp update \
   --image "${ACR_NAME}.azurecr.io/workflow-ui:${PREV_API_TAG}"
 
 az containerapp update \
-  --name "aca-ewastescalable-${TARGET_ENV}-analytics" \
+  --name "aca-ewastescalable-${TARGET_ENV}-analytic" \
   --resource-group "$RG" \
   --image "${ACR_NAME}.azurecr.io/workflow-analytics:${PREV_API_TAG}"
 
@@ -298,7 +298,7 @@ Immediately following a rollback, execute the standard verification checklist ag
 ```bash
 API_FQDN="aca-ewastescalable-dev-api.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io"
 UI_FQDN="aca-ewastescalable-dev-ui.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io"
-WORKER_FQDN="aca-ewastescalable-dev-analytics.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io"
+WORKER_FQDN="aca-ewastescalable-dev-analytic.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io"
 
 # API Gateway check
 curl -s -o /dev/null -w "API Status: %{http_code}\n" "https://${API_FQDN}/healthz"

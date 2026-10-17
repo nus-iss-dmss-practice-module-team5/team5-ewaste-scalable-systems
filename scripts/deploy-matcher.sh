@@ -13,7 +13,7 @@ set -Eeuo pipefail
 RG="${RG:-rg-ewastescalable-${TARGET_ENV}}"
 NAMESPACE="evh-ewastescalable-${TARGET_ENV}"
 API="aca-ewastescalable-${TARGET_ENV}-api"
-APP="aca-ewastescalable-${TARGET_ENV}-analytics"
+APP="aca-ewastescalable-${TARGET_ENV}-analytic"
 ISSUER="ewaste-matching-${TARGET_ENV}"
 AUDIENCE="ewaste-matching-api-${TARGET_ENV}"
 

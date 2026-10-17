@@ -45,7 +45,7 @@
 - **Backend API Gateway:** `https://aca-ewastescalable-dev-api.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
   - Health Endpoint: `/healthz`
   - Internal RPC: `/internal/v1/*` (Protected by workload bearer token)
-- **Analytics Worker:** `https://aca-ewastescalable-dev-analytics.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
+- **Analytics Worker:** `https://aca-ewastescalable-dev-analytic.salmoncoast-1b1c8372.malaysiawest.azurecontainerapps.io`
   - Readiness Endpoint: `/readyz`
 
 ---
@@ -184,7 +184,7 @@ All mock accounts share the unified test password:
 
 ### Phase 2: Event-Driven Matching Engine Processing
 
-1. The analytics container (`aca-ewastescalable-dev-analytics`) polls the Kafka topic.
+1. The analytics container (`aca-ewastescalable-dev-analytic`) polls the Kafka topic.
 2. The worker extracts the batch event and queries `POST /internal/v1/matching/runs`.
 3. The matching engine evaluates the 5 business rules:
    - `M1` (Category Capability): `PROC-001` supports `ICT_EQUIPMENT`.
@@ -282,7 +282,7 @@ az containerapp logs show \
 
 # Matcher Analytics Worker Event Processing Logs
 az containerapp logs show \
-  --name aca-ewastescalable-dev-analytics \
+  --name aca-ewastescalable-dev-analytic \
   --resource-group rg-ewastescalable-dev \
   --tail 50 \
   --follow
