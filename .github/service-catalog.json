@@ -1,0 +1,117 @@
+{
+  "global_paths": [
+    ".github/service-catalog.json",
+    ".github/workflows/cd-pipeline.yml",
+    ".github/workflows/service-pipeline.yml",
+    "scripts/ci/"
+  ],
+  "services": [
+    {
+      "name": "identity-access",
+      "group": "go-services",
+      "stack": "go",
+      "image": "identity-access-svc",
+      "dockerfile": "src/backend/Dockerfile",
+      "context": "src/backend",
+      "build_args": { "SERVICE": "identity-access" },
+      "app": "auth",
+      "paths": ["src/backend/", "src/backend/cmd/identity-access/"],
+      "exclude_paths": ["src/backend/cmd/"],
+      "requires_files": ["src/backend/cmd/identity-access/main.go"]
+    },
+    {
+      "name": "batch-workflow",
+      "group": "go-services",
+      "stack": "go",
+      "image": "batch-workflow-svc",
+      "dockerfile": "src/backend/Dockerfile",
+      "context": "src/backend",
+      "build_args": { "SERVICE": "batch-workflow" },
+      "app": "api",
+      "paths": ["src/backend/", "src/backend/cmd/batch-workflow/"],
+      "exclude_paths": ["src/backend/cmd/"],
+      "requires_files": ["src/backend/cmd/batch-workflow/main.go"]
+    },
+    {
+      "name": "claim-logistics",
+      "group": "go-services",
+      "stack": "go",
+      "image": "claim-logistics-svc",
+      "dockerfile": "src/backend/Dockerfile",
+      "context": "src/backend",
+      "build_args": { "SERVICE": "claim-logistics" },
+      "app": "claim",
+      "paths": ["src/backend/", "src/backend/cmd/claim-logistics/"],
+      "exclude_paths": ["src/backend/cmd/"],
+      "requires_files": ["src/backend/cmd/claim-logistics/main.go"]
+    },
+    {
+      "name": "custody-verification",
+      "group": "go-services",
+      "stack": "go",
+      "image": "custody-verification-svc",
+      "dockerfile": "src/backend/Dockerfile",
+      "context": "src/backend",
+      "build_args": { "SERVICE": "custody-verification" },
+      "app": "custody",
+      "paths": ["src/backend/", "src/backend/cmd/custody-verification/"],
+      "exclude_paths": ["src/backend/cmd/"],
+      "requires_files": ["src/backend/cmd/custody-verification/main.go"]
+    },
+    {
+      "name": "workflow-api",
+      "stack": "go",
+      "image": "workflow-api",
+      "dockerfile": "src/backend/Dockerfile",
+      "context": "src/backend",
+      "build_args": {},
+      "app": "api",
+      "paths": ["src/backend/", "src/backend/cmd/server/"],
+      "exclude_paths": ["src/backend/cmd/"],
+      "requires_files": ["src/backend/cmd/server/main.go"],
+      "replaced_by": "batch-workflow"
+    },
+    {
+      "name": "matching-worker",
+      "stack": "python",
+      "image": "matching-worker-svc",
+      "dockerfile": "src/matcher/Dockerfile",
+      "context": ".",
+      "target": "matching-worker",
+      "app": "matching-worker",
+      "paths": ["src/matcher/", "contracts/matching/"]
+    },
+    {
+      "name": "analytics-worker",
+      "stack": "python",
+      "image": "analytics-worker-svc",
+      "dockerfile": "src/matcher/Dockerfile",
+      "context": ".",
+      "target": "analytics-worker",
+      "app": "analytics",
+      "deploy_mode": "matcher-script",
+      "paths": ["src/matcher/", "contracts/matching/", "scripts/deploy-matcher.sh"],
+      "requires_services": ["matching-worker"]
+    },
+    {
+      "name": "workflow-analytics",
+      "stack": "python",
+      "image": "workflow-analytics",
+      "dockerfile": "src/matcher/Dockerfile",
+      "context": ".",
+      "app": "analytics",
+      "deploy_mode": "matcher-script",
+      "paths": ["src/matcher/", "contracts/matching/", "scripts/deploy-matcher.sh"],
+      "replaced_by": "analytics-worker"
+    },
+    {
+      "name": "ui",
+      "stack": "node",
+      "image": "workflow-ui",
+      "dockerfile": "src/frontend/Dockerfile",
+      "context": "src/frontend",
+      "app": "ui",
+      "paths": ["src/frontend/"]
+    }
+  ]
+}

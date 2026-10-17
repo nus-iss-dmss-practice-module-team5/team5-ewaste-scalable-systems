@@ -8,9 +8,16 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
+    # Must cover every global and service path in .github/service-catalog.json;
+    # test_plan_services.py fails if a planner input is missing here.
     paths:
       - 'src/**'
+      - 'contracts/matching/**'
+      - 'scripts/ci/**'
+      - 'scripts/deploy-matcher.sh'
+      - '.github/service-catalog.json'
       - '.github/workflows/cd-pipeline.yml'
+      - '.github/workflows/service-pipeline.yml'
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
@@ -25,8 +32,12 @@ on:
           - dev
           - stg
           - prod
+      services:
+        description: 'Services to ship: "all", or comma-separated names from .github/service-catalog.json (e.g. "ui" or "claim-logistics,ui")'
+        required: false
+        default: 'all'
       rollback_tag:
-        description: 'Optional: Image tag to rollback to (e.g. "PREVIOUS" for automatic N-1 release, or exact tag dev-a1b2c3d). Leave empty for standard build.'
+        description: 'Optional: Image tag to rollback to (e.g. "PREVIOUS" for automatic N-1 release, or exact tag dev-a1b2c3d). Applies to each selected service. Leave empty for standard build.'
         required: false
         default: ''
 
@@ -39,11 +50,6 @@ permissions:
 concurrency:
   group: cd-deployment-${{ github.event.workflow_run.head_branch || github.ref }}
   cancel-in-progress: false
-
-env:
-  IMAGE_NAME_API: 'workflow-api'
-  IMAGE_NAME_UI: 'workflow-ui'
-  IMAGE_NAME_ANALYTICS: 'workflow-analytics'
 
 jobs:
   # ============================================================================
@@ -214,434 +220,187 @@ jobs:
           echo "========================================================"
 
   # ============================================================================
-  # STAGE 1: MULTI-CONTAINER RELEASE (API, UI & ANALYTICS) & ACA DEPLOYMENT
-  # Runs on VNet-injected self-hosted runner with direct Private Link to ACR
+  # STAGE 1: PER-SERVICE PLAN (EWSS-19)
+  # Decides which services ship: the ones whose code changed, the ones named
+  # on a manual run, or all of them after a pipeline or database change. A
+  # service ships only if its container app exists in the target environment.
   # ============================================================================
-  deploy-application:
-    name: Package & Deploy (API, UI & Analytics - ${{ needs.resolve-environment.outputs.environment }})
+  plan-services:
+    name: Plan Services (${{ needs.resolve-environment.outputs.environment }})
     needs: [resolve-environment]
-    runs-on: [self-hosted, azure-vnet, "${{ needs.resolve-environment.outputs.environment }}"]
+    runs-on: ubuntu-latest
     environment: ${{ needs.resolve-environment.outputs.environment }}
     outputs:
-      aca_api_fqdn: ${{ steps.api_deploy.outputs.aca_api_fqdn }}
-      aca_ui_fqdn: ${{ steps.ui_deploy.outputs.aca_ui_fqdn }}
-      aca_analytics_fqdn: ${{ steps.analytics_deploy.outputs.aca_analytics_fqdn }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+      commit: ${{ steps.commit.outputs.sha }}
+      image_tag: ${{ steps.commit.outputs.image_tag }}
+      ui_build_args: ${{ steps.endpoints.outputs.ui_build_args }}
+      aca_api_fqdn: ${{ steps.endpoints.outputs.aca_api_fqdn }}
+      aca_ui_fqdn: ${{ steps.endpoints.outputs.aca_ui_fqdn }}
+      aca_analytics_fqdn: ${{ steps.endpoints.outputs.aca_analytics_fqdn }}
     steps:
       - name: Checkout Code Repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # A database cascade must ship the commit that was migrated, not
+          # whatever the default branch holds now.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Resolve Commit and Image Tag
+        id: commit
+        env:
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${TARGET_ENV}-${SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Test the Service Planner
+        run: python3 -m unittest discover -s scripts/ci
 
       - name: Authenticate to Microsoft Azure
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Validate Matcher Workload Configuration
+      - name: List Container Apps in the Target Environment
         env:
-          MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
-          ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}
-        run: |
-          test "${#MATCHER_SIGNING_SECRET}" -ge 32
-          if [ "${#ANALYTICS_SERVICE_TOKEN}" -lt 32 ]; then
-            echo "::error::Set EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN (or legacy ANALYTICS_SERVICE_TOKEN) with at least 32 characters."
-            exit 1
-          fi
-
-      - name: Install Sigstore Cosign
-        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
-
-      - name: Log in to Azure Container Registry
-        run: |
-          ACR_NAME=$(echo "${{ secrets.AZURE_ACR_NAME }}" | cut -d'.' -f1)
-          echo "ACR_NAME=$ACR_NAME" >> $GITHUB_ENV
-
-          echo "Logging into Azure CLI via local VM Managed Identity..."
-          az login --identity
-
-          echo "Fetching secure passwordless token for registry login server..."
-          ACR_TOKEN=$(az acr login --name "$ACR_NAME" --expose-token --query accessToken --output tsv)
-
-          echo "Seeding docker daemon authentication context..."
-          echo "$ACR_TOKEN" | docker login "$ACR_NAME".azurecr.io -u 00000000-0000-0000-0000-000000000000 --password-stdin
-
-      # ------------------------------------------------------------------------
-      # Resolve Target Deployment Image Tags (STANDARD, EXPLICIT, OR SMART PREVIOUS)
-      # ------------------------------------------------------------------------
-      - name: Resolve Effective Deployment Image Tags
-        id: resolve_tags
-        env:
-          GITHUB_SHA: ${{ github.sha }}
-          AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
-          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
-          RAW_INPUT: ${{ inputs.rollback_tag }}
-          IMAGE_NAME_API: ${{ env.IMAGE_NAME_API }}
-        run: |
-          ACR_SERVER="${AZURE_ACR_NAME}.azurecr.io"
-          ACR_NAME=$(echo "$ACR_SERVER" | cut -d'.' -f1)
-
-          # Normalize input: trim whitespace and uppercase
-          NORMALIZED_INPUT=$(echo "$RAW_INPUT" | tr '[:lower:]' '[:upper:]' | xargs)
-
-          IS_ROLLBACK="false"
-          RESOLVED_TAG=""
-
-          if [ "$NORMALIZED_INPUT" == "PREVIOUS" ] || [ "$NORMALIZED_INPUT" == "N-1" ]; then
-            IS_ROLLBACK="true"
-            echo "Smart Rollback requested: Querying ACR for previous (N-1) verified image tag..."
-
-            # Query ACR tags for API service ordered newest first, matching target environment prefix
-            RESOLVED_TAG=$(az acr repository show-tags \
-              --name "$ACR_NAME" \
-              --repository "$IMAGE_NAME_API" \
-              --orderby time_desc \
-              --output tsv 2>/dev/null | grep "^${TARGET_ENV}-" | sed -n '2p' || echo "")
-
-            if [ -z "$RESOLVED_TAG" ]; then
-              # Fallback if prefix filtering didn't match
-              RESOLVED_TAG=$(az acr repository show-tags \
-                --name "$ACR_NAME" \
-                --repository "$IMAGE_NAME_API" \
-                --orderby time_desc \
-                --output tsv 2>/dev/null | sed -n '2p' || echo "")
-            fi
-
-            if [ -z "$RESOLVED_TAG" ]; then
-              echo "::error::Smart Rollback failed: Could not determine an N-1 previous tag in ACR for environment '$TARGET_ENV'."
-              exit 1
-            fi
-            echo "Successfully resolved N-1 rollback tag: $RESOLVED_TAG"
-
-          elif [ -n "$RAW_INPUT" ]; then
-            IS_ROLLBACK="true"
-            RESOLVED_TAG="$RAW_INPUT"
-            echo "Explicit Rollback requested with tag: $RESOLVED_TAG"
-          else
-            SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
-            RESOLVED_TAG="${TARGET_ENV}-${SHORT_SHA}"
-            echo "Standard Build requested with commit tag: $RESOLVED_TAG"
-          fi
-
-          echo "is_rollback=$IS_ROLLBACK" >> "$GITHUB_OUTPUT"
-          echo "effective_tag=$RESOLVED_TAG" >> "$GITHUB_OUTPUT"
-
-      # ------------------------------------------------------------------------
-      # 1.1 BACKEND API CONTAINER
-      # ------------------------------------------------------------------------
-      - name: Build & Publish Backend API Container
-        env:
-          TARGET_TAG: ${{ steps.resolve_tags.outputs.effective_tag }}
-        run: |
-          ACR_SERVER="${{ secrets.AZURE_ACR_NAME }}.azurecr.io"
-
-          if [ "${{ steps.resolve_tags.outputs.is_rollback }}" == "true" ]; then
-            IMAGE_TAG="${ACR_SERVER}/${{ env.IMAGE_NAME_API }}:${TARGET_TAG}"
-            echo "Rolling back to existing API image: $IMAGE_TAG"
-            docker pull "$IMAGE_TAG" || true
-          else
-            IMAGE_TAG="${ACR_SERVER}/${{ env.IMAGE_NAME_API }}:${TARGET_TAG}"
-            echo "Building API image: $IMAGE_TAG"
-            docker build -t "$IMAGE_TAG" -f src/backend/Dockerfile src/backend/
-            echo "Pushing API image to ACR..."
-            docker push "$IMAGE_TAG"
-          fi
-          echo "API_IMAGE=$IMAGE_TAG" >> $GITHUB_ENV
-
-          API_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_TAG" 2>/dev/null || echo "$IMAGE_TAG")
-          echo "API_IMMUTABLE_DIGEST=$API_DIGEST" >> $GITHUB_ENV
-
-#      - name: Sign API Container Image Digest with Cosign
-#        run: |
-#          echo "Signing immutable API image digest: ${{ env.API_IMMUTABLE_DIGEST }}"
-#          if [ -n "${{ secrets.COSIGN_PRIVATE_KEY }}" ]; then
-#            cosign sign --yes \
-#              --key env://COSIGN_PRIVATE_KEY \
-#              ${{ env.API_IMMUTABLE_DIGEST }}
-#          else
-#            echo "Generating ephemeral keypair for API signing..."
-#            if [ ! -f cosign.key ]; then
-#              cosign generate-key-pair
-#            fi
-#            cosign sign --yes --key cosign.key ${{ env.API_IMMUTABLE_DIGEST }}
-#          fi
-#        env:
-#          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-#          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-
-      # ------------------------------------------------------------------------
-      # AUTHENTICATION CONTEXT FOR CONTAINER APPS MANAGEMENT
-      # ------------------------------------------------------------------------
-      - name: Switch Azure CLI Context to Service Principal
-        run: |
-          SP_APP_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
-          SP_PASS=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)
-          SP_TENANT=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)
-          SP_SUB=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)
-
-          echo "Authenticating Azure CLI with Deployment Service Principal..."
-          az login --service-principal -u "$SP_APP_ID" -p "$SP_PASS" --tenant "$SP_TENANT" > /dev/null
-          az account set --subscription "$SP_SUB"
-
-      - name: Deploy API Container to Azure Container Apps
-        id: api_deploy
-        run: |
-          TARGET_ENV="${{ needs.resolve-environment.outputs.environment }}"
-          RG="${{ needs.resolve-environment.outputs.resource_group }}"
-          APP_NAME="aca-ewaste-${TARGET_ENV}-api"
-
-          echo "Performing atomic container image update for $APP_NAME in $RG..."
-          echo "Target Image Digest: ${{ env.API_IMMUTABLE_DIGEST }}"
-
-          az containerapp update \
-            --name "$APP_NAME" \
-            --resource-group "$RG" \
-            --image "${{ env.API_IMMUTABLE_DIGEST }}" \
-            --output none
-
-          API_FQDN=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv)
-          echo "aca_api_fqdn=$API_FQDN" >> "$GITHUB_OUTPUT"
-          echo "API deployed successfully: https://$API_FQDN"
-
-      # ------------------------------------------------------------------------
-      # 1.2 FRONTEND UI CONTAINER
-      # ------------------------------------------------------------------------
-      - name: Build & Publish Frontend UI Container
-        env:
-          TARGET_TAG: ${{ steps.resolve_tags.outputs.effective_tag }}
-        run: |
-          ACR_SERVER="${{ secrets.AZURE_ACR_NAME }}.azurecr.io"
-          API_URL="https://${{ steps.api_deploy.outputs.aca_api_fqdn }}"
-
-          if [ "${{ steps.resolve_tags.outputs.is_rollback }}" == "true" ]; then
-            IMAGE_TAG="${ACR_SERVER}/${{ env.IMAGE_NAME_UI }}:${TARGET_TAG}"
-            echo "Rolling back to existing UI image: $IMAGE_TAG"
-            docker pull "$IMAGE_TAG" || true
-          else
-            IMAGE_TAG="${ACR_SERVER}/${{ env.IMAGE_NAME_UI }}:${TARGET_TAG}"
-            echo "Building UI image: $IMAGE_TAG"
-            docker build -t "$IMAGE_TAG" \
-              --build-arg NEXT_PUBLIC_API_URL="$API_URL" \
-              --build-arg NEXT_PUBLIC_API_BASE_URL="$API_URL" \
-              --build-arg API_PROXY_TARGET="$API_URL" \
-              --build-arg NEXT_PUBLIC_USE_MOCK_AUTH="false" \
-              -f src/frontend/Dockerfile src/frontend/
-            echo "Pushing UI image to ACR..."
-            docker push "$IMAGE_TAG"
-          fi
-          echo "UI_IMAGE=$IMAGE_TAG" >> $GITHUB_ENV
-
-          UI_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_TAG" 2>/dev/null || echo "$IMAGE_TAG")
-          echo "UI_IMMUTABLE_DIGEST=$UI_DIGEST" >> $GITHUB_ENV
-
-#      - name: Sign UI Container Image Digest with Cosign
-#        run: |
-#          echo "Signing immutable UI image digest: ${{ env.UI_IMMUTABLE_DIGEST }}"
-#          if [ -n "${{ secrets.COSIGN_PRIVATE_KEY }}" ]; then
-#            cosign sign --yes \
-#              --key env://COSIGN_PRIVATE_KEY \
-#              ${{ env.UI_IMMUTABLE_DIGEST }}
-#          else
-#            echo "Signing UI image with cosign key..."
-#            if [ ! -f cosign.key ]; then
-#              cosign generate-key-pair
-#            fi
-#            cosign sign --yes --key cosign.key ${{ env.UI_IMMUTABLE_DIGEST }}
-#          fi
-#        env:
-#          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-#          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-
-      - name: Deploy UI Container to Azure Container Apps
-        id: ui_deploy
-        run: |
-          TARGET_ENV="${{ needs.resolve-environment.outputs.environment }}"
-          RG="${{ needs.resolve-environment.outputs.resource_group }}"
-          APP_NAME="aca-ewaste-${TARGET_ENV}-ui"
-
-          echo "Performing atomic container image update for $APP_NAME in $RG..."
-          echo "Target Image Digest: ${{ env.UI_IMMUTABLE_DIGEST }}"
-
-          az containerapp update \
-            --name "$APP_NAME" \
-            --resource-group "$RG" \
-            --image "${{ env.UI_IMMUTABLE_DIGEST }}" \
-            --output none
-
-          UI_FQDN=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv)
-          echo "aca_ui_fqdn=$UI_FQDN" >> "$GITHUB_OUTPUT"
-          echo "UI deployed successfully: https://$UI_FQDN"
-
-      # ------------------------------------------------------------------------
-      # 1.3 ANALYTICS WORKER CONTAINER
-      # ------------------------------------------------------------------------
-      - name: Build and Push Analytics Worker Image to ACR
-        env:
-          TARGET_TAG: ${{ steps.resolve_tags.outputs.effective_tag }}
+          RG: ${{ needs.resolve-environment.outputs.resource_group }}
         run: |
           set -euo pipefail
-          ACR_SERVER="${{ secrets.AZURE_ACR_NAME }}.azurecr.io"
+          az containerapp list --resource-group "$RG" --query '[].name' --output tsv > existing-apps.txt
+          echo "Container apps in $RG:"
+          cat existing-apps.txt
 
-          if [ "${{ steps.resolve_tags.outputs.is_rollback }}" == "true" ]; then
-            IMAGE_TAG="${ACR_SERVER}/${{ env.IMAGE_NAME_ANALYTICS }}:${TARGET_TAG}"
-            echo "Rolling back to existing Matcher image: $IMAGE_TAG"
-            docker pull "$IMAGE_TAG"
-            # A rollback must name an actual matcher image, not the old demo.
-            test "$(docker inspect --format '{{index .Config.Labels "ewaste.component"}}' "$IMAGE_TAG")" = matcher
-          else
-            IMAGE_TAG="${ACR_SERVER}/${{ env.IMAGE_NAME_ANALYTICS }}:${TARGET_TAG}"
-            echo "Building Matcher Worker image: $IMAGE_TAG"
-            docker build -t "$IMAGE_TAG" -f src/matcher/Dockerfile .
-            echo "Pushing Matcher Worker image to ACR..."
-            docker push "$IMAGE_TAG"
-          fi
-
-          ANALYTICS_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_TAG")
-          [[ "$ANALYTICS_DIGEST" == *@sha256:* ]] || { echo 'Matcher image digest is missing or mutable.' >&2; exit 1; }
-          echo "ANALYTICS_IMMUTABLE_DIGEST=$ANALYTICS_DIGEST" >> "$GITHUB_ENV"
-
-      - name: Deploy Analytics Worker to Azure Container Apps
-        id: analytics_deploy
+      - name: Plan Services to Ship
+        id: plan
         env:
-          MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
-          ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+          REQUESTED: ${{ inputs.services }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          export TARGET_ENV="${{ needs.resolve-environment.outputs.environment }}"
-          export RG="${{ needs.resolve-environment.outputs.resource_group }}"
-          export MATCHER_IMAGE="${{ env.ANALYTICS_IMMUTABLE_DIGEST }}"
-          APP_NAME="aca-ewaste-${TARGET_ENV}-analytics"
+          set -euo pipefail
+          select=()
+          case "$EVENT_NAME" in
+            workflow_dispatch)
+              select=(--services "${REQUESTED:-all}") ;;
+            push)
+              if [[ "$PUSH_BEFORE" =~ ^[0-9a-f]{40}$ && ! "$PUSH_BEFORE" =~ ^0+$ ]] && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+                git diff --name-only "$PUSH_BEFORE" HEAD > changed-files.txt
+                select=(--changed-files changed-files.txt)
+              else
+                select=(--services all)
+              fi ;;
+            pull_request)
+              git diff --name-only "${PR_BASE}...HEAD" > changed-files.txt
+              select=(--changed-files changed-files.txt) ;;
+            *)
+              # Database cascade: the schema changed under every service.
+              select=(--services all) ;;
+          esac
+          [ -f changed-files.txt ] && { echo "Changed files:"; cat changed-files.txt; }
 
-          echo "Configuring matcher integration and updating $APP_NAME in $RG..."
-          echo "Target Image Digest: $MATCHER_IMAGE"
+          python3 scripts/ci/plan_services.py --environment "$TARGET_ENV" \
+            --existing-apps existing-apps.txt "${select[@]}" > plan.json
 
-          # Configure the API and worker, deploy the digest, check readiness and
-          # export aca_analytics_fqdn for the existing downstream steps.
-          bash scripts/deploy-matcher.sh
+          {
+            echo "## Service Plan ($TARGET_ENV)"
+            echo "| Service | Ships | Reason |"
+            echo "| :--- | :---: | :--- |"
+            jq -r '.include[] | "| `\(.name)` → `\(.app_name)` | yes | \(.reason) |"' plan.json
+            jq -r '.skipped[] | "| `\(.name)` | no | \(.reason) |"' plan.json
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      # ------------------------------------------------------------------------
-      # 1.4 LIVE CONTAINER READINESS PROBES (API, UI & ANALYTICS)
-      # ------------------------------------------------------------------------
-      - name: Verify Live ACA Health Readiness Probes (API, UI & Analytics)
-        run: |
-          API_FQDN="${{ steps.api_deploy.outputs.aca_api_fqdn }}"
-          UI_FQDN="${{ steps.ui_deploy.outputs.aca_ui_fqdn }}"
-          ANALYTICS_FQDN="${{ steps.analytics_deploy.outputs.aca_analytics_fqdn }}"
-          TARGET_ENV="${{ needs.resolve-environment.outputs.environment }}"
+          {
+            echo "matrix=$(jq -c '{include: [.include[] | {service: .}]}' plan.json)"
+            echo "count=$(jq '.include | length' plan.json)"
+            echo "split_backend=$(jq -r '.groups["go-services"]' plan.json)"
+          } >> "$GITHUB_OUTPUT"
 
-          if [ -n "$API_FQDN" ]; then
-            echo "Verifying API ingress accessibility at: https://$API_FQDN"
-            for i in {1..12}; do
-              STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$API_FQDN" || true)
-              echo "API Probe Attempt $i/12 (HTTP: $STATUS_CODE)"
-              if [ "$STATUS_CODE" != "000" ] && [ "$STATUS_CODE" -lt 500 ]; then
-                echo "API verified successfully (HTTP $STATUS_CODE)."
-                break
-              fi
-              sleep 10
-            done
-          fi
-
-          if [ -n "$UI_FQDN" ]; then
-            echo "Verifying UI ingress accessibility at: https://$UI_FQDN"
-            for i in {1..12}; do
-              STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$UI_FQDN" || true)
-              echo "UI Probe Attempt $i/12 (HTTP: $STATUS_CODE)"
-              if [ "$STATUS_CODE" != "000" ] && [ "$STATUS_CODE" -lt 500 ]; then
-                echo "UI verified successfully (HTTP $STATUS_CODE)."
-                break
-              fi
-              sleep 10
-            done
-          fi
-
-          # Analytics uses external ingress only in dev; stg/prod runs with internal ingress.
-          # The ACA environment handles internal health probing — no external curl needed.
-          if [ -n "$ANALYTICS_FQDN" ] && [ "$TARGET_ENV" == "dev" ]; then
-            echo "Verifying Analytics ingress accessibility at: https://$ANALYTICS_FQDN/readyz"
-            for i in {1..12}; do
-              STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$ANALYTICS_FQDN/readyz" || true)
-              echo "Analytics Probe Attempt $i/12 (HTTP: $STATUS_CODE)"
-              if [ "$STATUS_CODE" == "200" ]; then
-                echo "Analytics Worker verified successfully (HTTP 200)."
-                break
-              fi
-              sleep 10
-            done
-          elif [ -n "$ANALYTICS_FQDN" ]; then
-            echo "Analytics Worker uses internal ingress in $TARGET_ENV — readiness probe skipped (ACA manages internal routing)."
-          fi
-
-      # ------------------------------------------------------------------------
-      # 1.5 PRUNE OLD ACR IMAGES (Retain Last 3 for Rollback Safety)
-      # ------------------------------------------------------------------------
-      - name: Prune Stale Container Images in ACR (Keep Last 3)
-        if: steps.resolve_tags.outputs.is_rollback != 'true'
-        run: |
-          ACR_SERVER="${{ secrets.AZURE_ACR_NAME }}.azurecr.io"
-          ACR_NAME=$(echo "$ACR_SERVER" | cut -d'.' -f1)
-
-          for REPO in "${{ env.IMAGE_NAME_API }}" "${{ env.IMAGE_NAME_UI }}" "${{ env.IMAGE_NAME_ANALYTICS }}"; do
-            echo "Checking image tags for repository: $REPO"
-
-            # Fetch tags sorted by creation time (newest first), skip top 3, and delete the rest
-            TAGS_TO_DELETE=$(az acr repository show-tags \
-              --name "$ACR_NAME" \
-              --repository "$REPO" \
-              --orderby time_desc \
-              --output tsv | tail -n +4)
-
-            if [ -n "$TAGS_TO_DELETE" ]; then
-              echo "Pruning older tags in $REPO:"
-              echo "$TAGS_TO_DELETE"
-              for TAG in $TAGS_TO_DELETE; do
-                az acr repository delete --name "$ACR_NAME" --image "${REPO}:${TAG}" --yes
-              done
-            else
-              echo "Repository $REPO has 3 or fewer tags. Nothing to prune."
-            fi
-          done
-
-      # ------------------------------------------------------------------------
-      # 1.6 PUBLISH ROLLBACK CANDIDATES TO GITHUB ACTIONS SUMMARY
-      # ------------------------------------------------------------------------
-      - name: Publish Rollback Tag Catalog to Job Summary
-        if: always()
+      - name: Resolve Service Endpoints
+        id: endpoints
         env:
-          TARGET_TAG: ${{ steps.resolve_tags.outputs.effective_tag }}
+          RG: ${{ needs.resolve-environment.outputs.resource_group }}
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+          SPLIT_BACKEND: ${{ steps.plan.outputs.split_backend }}
         run: |
-          ACR_SERVER="${{ secrets.AZURE_ACR_NAME }}.azurecr.io"
-          ACR_NAME=$(echo "$ACR_SERVER" | cut -d'.' -f1)
+          set -euo pipefail
+          fqdn() {
+            grep -qx "aca-ewaste-${TARGET_ENV}-$1" existing-apps.txt || return 0
+            az containerapp show --name "aca-ewaste-${TARGET_ENV}-$1" --resource-group "$RG" \
+              --query properties.configuration.ingress.fqdn --output tsv
+          }
+          API=$(fqdn api); UI=$(fqdn ui); ANALYTICS=$(fqdn analytics)
 
-          echo "## Deployment & Rollback Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deployed Tag:** \`${TARGET_TAG}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deployment Mode:** \`${{ steps.resolve_tags.outputs.is_rollback == 'true' && 'Rollback' || 'Standard Build' }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Target Environment:** \`${{ needs.resolve-environment.outputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> [!TIP]" >> $GITHUB_STEP_SUMMARY
-          echo "> **One-Click Rollback:** To roll back to the prior stable release at any time, run this workflow and enter **\`PREVIOUS\`** for \`rollback_tag\`." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Verified Available Image Tags in ACR" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | Latest Available Tags (Newest First) | Target Environment |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :---: |" >> $GITHUB_STEP_SUMMARY
-
-          for REPO in "${{ env.IMAGE_NAME_API }}" "${{ env.IMAGE_NAME_UI }}" "${{ env.IMAGE_NAME_ANALYTICS }}"; do
-            TAGS=$(az acr repository show-tags --name "$ACR_NAME" --repository "$REPO" --orderby time_desc --output tsv 2>/dev/null | head -n 5 | paste -sd ", " - || echo "None")
-            echo "| \`$REPO\` | \`$TAGS\` | \`${{ needs.resolve-environment.outputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
-          done
+          ARGS="NEXT_PUBLIC_USE_MOCK_AUTH=false"
+          if [ -n "$API" ]; then
+            ARGS+=$'\n'"NEXT_PUBLIC_API_URL=https://$API"$'\n'"NEXT_PUBLIC_API_BASE_URL=https://$API"$'\n'"API_PROXY_TARGET=https://$API"
+          fi
+          # Split API routing only once all four Go services are live.
+          if [ "$SPLIT_BACKEND" = "true" ]; then
+            ARGS+=$'\n'"IDENTITY_ACCESS_URL=https://$(fqdn auth)"
+            ARGS+=$'\n'"BATCH_WORKFLOW_URL=https://$API"
+            ARGS+=$'\n'"CLAIM_LOGISTICS_URL=https://$(fqdn claim)"
+            ARGS+=$'\n'"CUSTODY_VERIFICATION_URL=https://$(fqdn custody)"
+          fi
+          {
+            echo "aca_api_fqdn=$API"
+            echo "aca_ui_fqdn=$UI"
+            echo "aca_analytics_fqdn=$ANALYTICS"
+            echo "ui_build_args<<EOF_UI_ARGS"
+            echo "$ARGS"
+            echo "EOF_UI_ARGS"
+          } >> "$GITHUB_OUTPUT"
 
   # ============================================================================
-  # STAGE 2: DYNAMIC APPLICATION SECURITY TESTING (OWASP ZAP)
+  # STAGE 2: BUILD, TEST, SCAN & DEPLOY EACH PLANNED SERVICE ON ITS OWN
+  # One failing service does not stop the others (fail-fast: false).
+  # ============================================================================
+  services:
+    name: Ship
+    needs: [resolve-environment, plan-services]
+    if: needs.plan-services.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan-services.outputs.matrix) }}
+    uses: ./.github/workflows/service-pipeline.yml
+    with:
+      service: ${{ toJSON(matrix.service) }}
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      resource_group: ${{ needs.resolve-environment.outputs.resource_group }}
+      commit: ${{ needs.plan-services.outputs.commit }}
+      image_tag: ${{ needs.plan-services.outputs.image_tag }}
+      rollback_tag: ${{ inputs.rollback_tag }}
+      ui_build_args: ${{ needs.plan-services.outputs.ui_build_args }}
+    secrets:
+      AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
+      EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN }}
+      ANALYTICS_SERVICE_TOKEN: ${{ secrets.ANALYTICS_SERVICE_TOKEN }}
+
+  # ============================================================================
+  # STAGE 3: DYNAMIC APPLICATION SECURITY TESTING (OWASP ZAP)
+  # Runs after any service ships; scans the environment's API entry point.
   # ============================================================================
   dast-security-scan:
     name: OWASP ZAP DAST Scan (${{ needs.resolve-environment.outputs.environment }})
-    needs: [resolve-environment, deploy-application]
+    needs: [resolve-environment, plan-services, services]
+    if: needs.services.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code Repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Execute OWASP ZAP Baseline Scan Against Deployed Service
-        if: needs.deploy-application.outputs.aca_api_fqdn != ''
+        if: needs.plan-services.outputs.aca_api_fqdn != ''
         uses: zaproxy/action-baseline@7c4deb10e6261301961c86d65d54a516394f9aed # v0.14.0
         with:
-          target: "https://${{ needs.deploy-application.outputs.aca_api_fqdn }}"
+          target: "https://${{ needs.plan-services.outputs.aca_api_fqdn }}"
           cmd_options: '-a'
           allow_issue_writing: false
           fail_action: false
@@ -650,7 +409,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: zap-dast-${{ needs.resolve-environment.outputs.environment }}-${{ github.sha }}
+          name: zap-dast-${{ needs.resolve-environment.outputs.environment }}-${{ needs.plan-services.outputs.commit }}
           path: |
             report_html.html
             report_md.md
@@ -658,11 +417,12 @@ jobs:
           retention-days: 30
 
   # ============================================================================
-  # STAGE 3: POST-DEPLOYMENT SMOKE & AUDIT VERIFICATION
+  # STAGE 4: POST-DEPLOYMENT SMOKE & AUDIT VERIFICATION
   # ============================================================================
   smoke-and-audit-verification:
     name: Smoke & Audit Verification (${{ needs.resolve-environment.outputs.environment }})
-    needs: [resolve-environment, deploy-application, dast-security-scan]
+    needs: [resolve-environment, plan-services, services, dast-security-scan]
+    if: needs.services.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code Repository
@@ -673,7 +433,7 @@ jobs:
       # ------------------------------------------------------------------------
       - name: Execute Seeded-User Login API Smoke Test
         run: |
-          API_FQDN="${{ needs.deploy-application.outputs.aca_api_fqdn }}"
+          API_FQDN="${{ needs.plan-services.outputs.aca_api_fqdn }}"
           if [ -n "$API_FQDN" ]; then
             API_URL="https://${API_FQDN}/api/v1/auth/login"
             CORRELATION_ID="smoke-api-${{ needs.resolve-environment.outputs.environment }}-$(date +%s)"
@@ -698,7 +458,7 @@ jobs:
       # ------------------------------------------------------------------------
       - name: Execute Frontend UI Endpoint Smoke Test
         run: |
-          UI_FQDN="${{ needs.deploy-application.outputs.aca_ui_fqdn }}"
+          UI_FQDN="${{ needs.plan-services.outputs.aca_ui_fqdn }}"
           if [ -n "$UI_FQDN" ]; then
             UI_URL="https://${UI_FQDN}/"
             echo "Verifying Frontend UI accessibility at: $UI_URL"
@@ -713,7 +473,7 @@ jobs:
       # ------------------------------------------------------------------------
       - name: Verify Matcher Without Synthetic Business Events
         run: |
-          ANALYTICS_FQDN="${{ needs.deploy-application.outputs.aca_analytics_fqdn }}"
+          ANALYTICS_FQDN="${{ needs.plan-services.outputs.aca_analytics_fqdn }}"
           TARGET_ENV="${{ needs.resolve-environment.outputs.environment }}"
 
           if [ -n "$ANALYTICS_FQDN" ] && [ "$TARGET_ENV" == "dev" ]; then
@@ -749,7 +509,7 @@ jobs:
           echo "  - Environment Target: ${{ needs.resolve-environment.outputs.environment }}"
           echo "  - Deployment Scope: ${{ needs.resolve-environment.outputs.deployment_desc }}"
           echo "  - Database Status: Migrations are a prerequisite; authenticated matcher lookup verified"
-          echo "  - Container Release: Multi-Container Verified (API, UI, & Analytics)"
+          echo "  - Container Release: Per-service (see the Service Plan and each Ship job summary)"
           echo "  - Event Streaming: Kafka/MySQL persistence tested in matcher CI; live checks respect environment ingress"
           echo "  - Runtime Health: ACA Ingress Probes Verified (:8080, :3000, :8000)"
           echo "  - DAST Scan: OWASP ZAP Report Retained for Academic Review"
