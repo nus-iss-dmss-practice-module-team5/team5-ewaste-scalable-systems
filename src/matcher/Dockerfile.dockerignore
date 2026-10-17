@@ -4,3 +4,6 @@
 .git
 artifacts
 tmp
+**/*.env
+**/.env
+**/.env.*

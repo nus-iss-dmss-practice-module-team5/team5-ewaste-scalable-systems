@@ -5,15 +5,15 @@ from pathlib import Path
 from .contract import loads, require
 
 
-def kafka_config(environ=None):
+def kafka_config(environ=None, *, prefix="MATCHER"):
     env = os.environ if environ is None else environ
-    local = env.get("MATCHER_LOCAL_TEST") == "1"
-    if env.get("MATCHER_KAFKA_CONFIG_FILE"):
-        config = loads(Path(env["MATCHER_KAFKA_CONFIG_FILE"]).read_bytes())
+    local = env.get(prefix + "_LOCAL_TEST") == "1"
+    if env.get(prefix + "_KAFKA_CONFIG_FILE"):
+        config = loads(Path(env[prefix + "_KAFKA_CONFIG_FILE"]).read_bytes())
     else:
         # Names accepted by the supplied Azure IaC/CD service configuration.
-        brokers = env.get("KAFKA_BOOTSTRAP_SERVERS", "")
-        connection = env.get("KAFKA_CONNECTION_STRING", "")
+        brokers = env.get(prefix + "_KAFKA_BOOTSTRAP_SERVERS", env.get("KAFKA_BOOTSTRAP_SERVERS", ""))
+        connection = env.get(prefix + "_KAFKA_CONNECTION_STRING", env.get("KAFKA_CONNECTION_STRING", ""))
         require(bool(brokers))
         if connection:
             config = {"bootstrap.servers": brokers, "security.protocol": "SASL_SSL",

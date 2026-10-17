@@ -1,0 +1,28 @@
+# Run against provisioned Kafka and Batch Workflow; no database credentials.
+services:
+  matching-worker:
+    build:
+      context: ../..
+      dockerfile: src/matcher/Dockerfile
+      target: matching-worker
+    env_file: matching.env
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ['MATCHER_HEALTH_PORT'] + '/readyz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+  analytics-worker:
+    build:
+      context: ../..
+      dockerfile: src/matcher/Dockerfile
+      target: analytics-worker
+    env_file: analytics.env
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ['ANALYTICS_HEALTH_PORT'] + '/readyz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
