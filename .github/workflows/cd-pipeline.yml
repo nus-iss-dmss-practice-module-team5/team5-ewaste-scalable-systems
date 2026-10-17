@@ -8,9 +8,16 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
+    # Must cover every global and service path in .github/service-catalog.json;
+    # test_plan_services.py fails if a planner input is missing here.
     paths:
       - 'src/**'
+      - 'contracts/matching/**'
+      - 'scripts/ci/**'
+      - 'scripts/deploy-matcher.sh'
+      - '.github/service-catalog.json'
       - '.github/workflows/cd-pipeline.yml'
+      - '.github/workflows/service-pipeline.yml'
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]

@@ -5,8 +5,10 @@ without the others.
 
 ## How a run works
 
-`cd-pipeline.yml` keeps its triggers and environment rules. After it resolves
-the target environment:
+`cd-pipeline.yml` keeps its environment rules. Its push trigger also watches
+every planner input (the catalogue, the pipeline files, `scripts/ci/` and the
+matcher contracts), so a change to any of them reaches the planner. After it
+resolves the target environment:
 
 1. **Plan Services** lists the container apps in `rg-ewaste-<env>` and runs
    `scripts/ci/plan_services.py` against `.github/service-catalog.json`. The
@@ -32,6 +34,10 @@ the target environment:
 | Database migration cascade   | All available services                        |
 | Manual run                   | The `services` input: `all` or a list         |
 | Change to a pipeline file    | All available services                        |
+
+When you add a path to `global_paths` or a service's `paths`, add it to
+`on.push.paths` in `cd-pipeline.yml` too. `test_plan_services.py` fails until
+you do.
 
 Changes to `src/backend/cmd/<service>/` ship that Go service alone. Other
 `src/backend/` changes ship all four Go services, because they share code.

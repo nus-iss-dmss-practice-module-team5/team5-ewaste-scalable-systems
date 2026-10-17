@@ -72,6 +72,52 @@ class CatalogTests(unittest.TestCase):
                 ps.load_catalog(path)
 
 
+def push_path_filters(workflow: Path) -> list[str]:
+    """Read on.push.paths without PyYAML, which the runner may not have."""
+    filters, in_push, in_paths = [], False, False
+    for line in workflow.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 2:
+            in_push, in_paths = stripped == "push:", False
+        elif in_push and indent == 4:
+            in_paths = stripped == "paths:"
+        elif in_paths and stripped.startswith("- "):
+            filters.append(stripped[2:].strip("'\""))
+    return filters
+
+
+def covered(pattern: str, filters: list[str]) -> bool:
+    """A catalogue folder ("a/") or file ("a/b") is covered by "x/**" above it or an exact match."""
+    for glob in filters:
+        if glob.endswith("/**") and pattern.startswith(glob[:-2]):
+            return True
+        if glob == pattern:
+            return True
+    return False
+
+
+class TriggerTests(unittest.TestCase):
+    def test_push_trigger_covers_every_planner_input(self):
+        """A planner input outside the push filter never reaches the planner on push."""
+        catalog = ps.load_catalog(REAL_CATALOG)
+        filters = push_path_filters(REAL_CATALOG.parent / "workflows" / "cd-pipeline.yml")
+        self.assertIn("src/**", filters, "push path filter was not parsed")
+        inputs = set(catalog["global_paths"])
+        for service in catalog["services"]:
+            inputs.update(service["paths"])
+        missing = sorted(p for p in inputs if not covered(p, filters))
+        self.assertEqual(missing, [], f"add these to on.push.paths in cd-pipeline.yml: {missing}")
+
+    def test_coverage_check_spots_a_missing_input(self):
+        self.assertTrue(covered("src/backend/", ["src/**"]))
+        self.assertTrue(covered("scripts/deploy-matcher.sh", ["scripts/deploy-matcher.sh"]))
+        self.assertFalse(covered("scripts/ci/", ["src/**", "scripts/deploy-matcher.sh"]))
+        self.assertFalse(covered("contracts/matching/", ["contracts/match/**"]))
+
+
 class TodayOnDevTests(PlanTestCase):
     """Go entrypoints exist, but only the api, ui and analytics apps exist in Azure."""
 
