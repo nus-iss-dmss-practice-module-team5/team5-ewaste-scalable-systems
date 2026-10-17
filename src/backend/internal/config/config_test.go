@@ -30,7 +30,7 @@ auth:
 	t.Setenv("EWASTE_SERVER_ALLOWED_ORIGINS", "http://localhost:3000,https://example.com")
 	t.Setenv("EWASTE_DATABASE_HOST", "azure-mysql")
 	t.Setenv("EWASTE_DATABASE_PORT", "3306")
-	t.Setenv("EWASTE_DATABASE_NAME", "ewastedb")
+	t.Setenv("EWASTE_DATABASE_NAME", "ewastescalabledb")
 	t.Setenv("EWASTE_DATABASE_USER", "ewasteadmin")
 	t.Setenv("EWASTE_REDIS_ADDRESS", "azure-redis:6380")
 	t.Setenv("EWASTE_REDIS_DB", "1")
@@ -42,11 +42,11 @@ auth:
 	t.Setenv("EWASTE_RATE_LIMIT_REQUESTS", "25")
 	t.Setenv("EWASTE_RATE_LIMIT_WINDOW", "2m")
 	t.Setenv("EWASTE_KAFKA_ENABLED", "true")
-	t.Setenv("EWASTE_KAFKA_BROKERS", "evh-ewaste-dev.servicebus.windows.net:9093")
+	t.Setenv("EWASTE_KAFKA_BROKERS", "evh-ewastescalable-dev.servicebus.windows.net:9093")
 	t.Setenv("EWASTE_KAFKA_TLS_ENABLED", "true")
 	t.Setenv("EWASTE_KAFKA_SASL_MECHANISM", "PLAIN")
 	t.Setenv("EWASTE_KAFKA_SASL_USERNAME", "$ConnectionString")
-	t.Setenv("KAFKA_CONNECTION_STRING", "Endpoint=sb://evh-ewaste-dev.servicebus.windows.net/;SharedAccessKeyName=auth-ewaste-workload;SharedAccessKey=redacted")
+	t.Setenv("KAFKA_CONNECTION_STRING", "Endpoint=sb://evh-ewastescalable-dev.servicebus.windows.net/;SharedAccessKeyName=auth-ewastescalable-workload;SharedAccessKey=redacted")
 	t.Setenv("EWASTE_STORAGE_TYPE", "azure")
 	t.Setenv("EWASTE_STORAGE_AZURE_ACCOUNT_NAME", "stgewastescalabledev")
 	t.Setenv("EWASTE_STORAGE_AZURE_CONTAINER_NAME", "evidence-private")
@@ -62,7 +62,7 @@ auth:
 	if len(cfg.Server.AllowedOrigins) != 2 || cfg.Server.AllowedOrigins[0] != "http://localhost:3000" || cfg.Server.AllowedOrigins[1] != "https://example.com" {
 		t.Fatalf("expected configured CORS origins, got %#v", cfg.Server.AllowedOrigins)
 	}
-	if cfg.Mode != ModeProduction || cfg.Database.Host != "azure-mysql" || cfg.Database.Port != 3306 || cfg.Database.Name != "ewastedb" || cfg.Database.User != "ewasteadmin" {
+	if cfg.Mode != ModeProduction || cfg.Database.Host != "azure-mysql" || cfg.Database.Port != 3306 || cfg.Database.Name != "ewastescalabledb" || cfg.Database.User != "ewasteadmin" {
 		t.Fatalf("expected database and mode environment values, got mode=%q database=%+v", cfg.Mode, cfg.Database)
 	}
 	if cfg.Database.Password != "db-secret" || cfg.Redis.Password != "redis-secret" || cfg.Redis.Address != "azure-redis:6380" || cfg.Redis.DB != 1 || !cfg.Redis.TLSEnabled {
@@ -80,7 +80,7 @@ auth:
 	if cfg.RateLimit.Requests != 25 || cfg.RateLimit.Window.Minutes() != 2 {
 		t.Fatalf("expected rate limit environment values, got requests=%d window=%s", cfg.RateLimit.Requests, cfg.RateLimit.Window)
 	}
-	if !cfg.Kafka.Enabled || len(cfg.Kafka.Brokers) != 1 || cfg.Kafka.Brokers[0] != "evh-ewaste-dev.servicebus.windows.net:9093" || !cfg.Kafka.TLSEnabled || cfg.Kafka.SASLMechanism != "PLAIN" || cfg.Kafka.SASLUsername != "$ConnectionString" {
+	if !cfg.Kafka.Enabled || len(cfg.Kafka.Brokers) != 1 || cfg.Kafka.Brokers[0] != "evh-ewastescalable-dev.servicebus.windows.net:9093" || !cfg.Kafka.TLSEnabled || cfg.Kafka.SASLMechanism != "PLAIN" || cfg.Kafka.SASLUsername != "$ConnectionString" {
 		t.Fatalf("expected Event Hubs Kafka connection settings, got %+v", cfg.Kafka)
 	}
 	if cfg.Kafka.SASLPassword == "" {

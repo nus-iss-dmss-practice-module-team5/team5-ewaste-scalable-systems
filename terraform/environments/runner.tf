@@ -3,8 +3,8 @@
 # ============================================================================
 # Solves ACR Private Link isolation:
 # - ACR public network access is completely disabled.
-# - The runner VM is injected directly into vnet-ewaste-${var.environment} (10.0.4.0/24).
-# - Resolves acrewasteplatform.azurecr.io via privatelink.azurecr.io to 10.0.3.x.
+# - The runner VM is injected directly into vnet-ewastescalable-${var.environment} (10.0.4.0/24).
+# - Resolves acrewastescalable.azurecr.io via privatelink.azurecr.io to 10.0.3.x.
 # - Outbound long-polling connection to GitHub Actions (no inbound ports open).
 # - Native Azure RBAC (AcrPush / AcrPull) via User-Assigned Managed Identity.
 # ============================================================================

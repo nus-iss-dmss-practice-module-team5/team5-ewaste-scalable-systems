@@ -2,7 +2,7 @@
 
 **Task**: `S3-X-I-L-01` (Jira: `EWCSB-162`) — Provision Evidence Storage and Configuration
 **Architectural Baseline**: Decision D2 (Zero-Trust Private Evidence Store), Sprint 3
-**Target Workload**: `workflow-api` Container App (`aca-ewaste-{env}-api`)
+**Target Workload**: `workflow-api` Container App (`aca-ewastescalable-{env}-api`)
 
 ---
 
@@ -14,13 +14,13 @@ The e-Waste platform evidence storage securely stores physical verification and 
 
 ```
                       +-------------------------------------------------------+
-                      | Azure Virtual Network (vnet-ewaste-dev)                |
+                      | Azure Virtual Network (vnet-ewastescalable-dev)                |
                       |                                                       |
                       |   +-----------------------------------------------+   |
                       |   | snet-aca (10.0.8.0/21)                        |   |
                       |   | +-------------------------------------------+ |   |
-                      |   | | Azure Container App: aca-ewaste-dev-api   | |   |
-                      |   | | - Identity: id-ewaste-dev (Managed Id)   | |   |
+                      |   | | Azure Container App: aca-ewastescalable-dev-api   | |   |
+                      |   | | - Identity: id-ewastescalable-dev (Managed Id)   | |   |
                       |   | +-------------------------------------------+ |   |
                       |   +-----------------------+-----------------------+   |
                       |                           |                           |
@@ -52,7 +52,7 @@ The e-Waste platform evidence storage securely stores physical verification and 
 ### Key Security Guardrails
 
 1. **Zero-Trust Network Isolation**: `public_network_access_enabled = false`. Direct internet access is blocked. All traffic from `workflow-api` traverses Azure Private Link (`10.0.3.7`).
-2. **Secretless Authentication**: No storage account access keys or connection strings are stored in code, environment variables, or config files. The application authenticates dynamically using the User-Assigned Managed Identity (`id-ewaste-{env}`).
+2. **Secretless Authentication**: No storage account access keys or connection strings are stored in code, environment variables, or config files. The application authenticates dynamically using the User-Assigned Managed Identity (`id-ewastescalable-{env}`).
 3. **Least Privilege RBAC**: The Managed Identity is assigned the built-in role **Storage Blob Data Contributor** scoped specifically to the evidence storage account.
 
 ---
@@ -61,15 +61,15 @@ The e-Waste platform evidence storage securely stores physical verification and 
 
 The IaC pipeline automatically provisions and injects the following configuration variables into the `workflow-api` container app:
 
-| Variable Name             | Example Dev Value                             | Description                                                                               |
-| :------------------------ | :-------------------------------------------- | :---------------------------------------------------------------------------------------- |
-| `STORAGE_ADAPTER_TYPE`    | `azure_blob`                                  | Tells backend to instantiate the Azure Blob storage adapter (`local` for dev/unit tests). |
+| Variable Name             | Example Dev Value                                     | Description                                                                               |
+| :------------------------ | :---------------------------------------------------- | :---------------------------------------------------------------------------------------- |
+| `STORAGE_ADAPTER_TYPE`    | `azure_blob`                                          | Tells backend to instantiate the Azure Blob storage adapter (`local` for dev/unit tests). |
 | `AZURE_STORAGE_ACCOUNT`   | `stgewastescalabledev`                                | The name of the target Azure Storage Account.                                             |
-| `AZURE_STORAGE_CONTAINER` | `evidence-private`                            | The dedicated private blob container for verification evidence.                           |
+| `AZURE_STORAGE_CONTAINER` | `evidence-private`                                    | The dedicated private blob container for verification evidence.                           |
 | `AZURE_STORAGE_ENDPOINT`  | `https://stgewastescalabledev.blob.core.windows.net/` | Private endpoint URL. If omitted, derived automatically from `AZURE_STORAGE_ACCOUNT`.     |
-| `AZURE_USE_MANAGED_ID`    | `true`                                        | Enables managed-identity authentication.                                                  |
-| `AZURE_CLIENT_ID`         | API user-assigned identity client ID          | Selects the identity used by Azure Go SDK `DefaultAzureCredential`.                       |
-| `MAX_UPLOAD_SIZE_BYTES`   | `5242880`                                     | Maximum upload size allowed per file (**5 MB**).                                          |
+| `AZURE_USE_MANAGED_ID`    | `true`                                                | Enables managed-identity authentication.                                                  |
+| `AZURE_CLIENT_ID`         | API user-assigned identity client ID                  | Selects the identity used by Azure Go SDK `DefaultAzureCredential`.                       |
+| `MAX_UPLOAD_SIZE_BYTES`   | `5242880`                                             | Maximum upload size allowed per file (**5 MB**).                                          |
 
 > **Note**: Backward compatibility variables `EWASTE_STORAGE_AZURE_ACCOUNT_NAME`, `EWASTE_STORAGE_AZURE_CONTAINER_NAME`, and `EWASTE_STORAGE_AZURE_ENDPOINT` are also bound to provide full compatibility with existing configuration loaders.
 

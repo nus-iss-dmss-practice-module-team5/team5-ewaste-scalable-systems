@@ -174,12 +174,12 @@ jobs:
             -backend-config="key=shared.tfstate" \
             -backend-config="access_key=$TF_STATE_SA_ACCESS_KEY"
 
-          # Idempotent import: If acrewastescale already exists in rg-ewaste-shared, adopt it into state
-          ACR_ID=$(az acr show --name "${TF_VAR_acr_name:-acrewastescale}" --resource-group "rg-ewaste-shared" --query id -o tsv 2>/dev/null || true)
+          # Idempotent import: If acrewastescalable already exists in rg-ewastescalable-shared, adopt it into state
+          ACR_ID=$(az acr show --name "${TF_VAR_acr_name:-acrewastescalable}" --resource-group "rg-ewastescalable-shared" --query id -o tsv 2>/dev/null || true)
           if [ -n "$ACR_ID" ]; then
             if ! terraform state show azurerm_container_registry.acr &>/dev/null; then
               echo "[import] Adopting existing ACR $ACR_ID into Terraform state..."
-              terraform import -var="acr_name=${TF_VAR_acr_name:-acrewastescale}" azurerm_container_registry.acr "$ACR_ID" || true
+              terraform import -var="acr_name=${TF_VAR_acr_name:-acrewastescalable}" azurerm_container_registry.acr "$ACR_ID" || true
             fi
           fi
 
@@ -274,10 +274,13 @@ jobs:
           # are missing from Terraform state (one-time migration from the
           # old CLI-based CD provisioning model).
           # ----------------------------------------------------------------
-          RG="rg-ewaste-${TARGET_ENV}"
+          RG="rg-ewastescalable-${TARGET_ENV}"
           for APP_SUFFIX in api ui analytics; do
             RESOURCE_ADDR="azurerm_container_app.${APP_SUFFIX}"
-            APP_NAME="aca-ewaste-${TARGET_ENV}-${APP_SUFFIX}"
+            APP_NAME="aca-ewastescalable-${TARGET_ENV}-${APP_SUFFIX}"
+            if [ "$APP_SUFFIX" == "analytics" ]; then
+              APP_NAME="aca-ewastescalable-${TARGET_ENV}-analytic"
+            fi
 
             if terraform state show "$RESOURCE_ADDR" &>/dev/null; then
               echo "[import] $RESOURCE_ADDR already in state — skipping."
@@ -347,8 +350,8 @@ jobs:
           # taint it so Terraform cleanly replaces and re-establishes it.
           # ----------------------------------------------------------------
           PE_STATUS=$(az network private-endpoint show \
-            --name "pe-acr-ewaste-${TARGET_ENV}" \
-            --resource-group "rg-ewaste-${TARGET_ENV}" \
+            --name "pe-acr-ewastescalable-${TARGET_ENV}" \
+            --resource-group "rg-ewastescalable-${TARGET_ENV}" \
             --query "privateLinkServiceConnections[0].privateLinkServiceConnectionState.status" -o tsv 2>/dev/null || true)
 
           if [ "$PE_STATUS" == "Disconnected" ]; then
@@ -387,8 +390,8 @@ jobs:
 
           ACR_NAME_VAL="${{ secrets.AZURE_ACR_NAME }}"
           ACR_SERVER=$(terraform output -raw acr_login_server 2>/dev/null || echo "${ACR_NAME_VAL}.azurecr.io")
-          MYSQL_FQDN=$(terraform output -raw mysql_fqdn 2>/dev/null || echo "mysql-ewaste-${TARGET_ENV}.mysql.database.azure.com")
-          MYSQL_DB=$(terraform output -raw mysql_database_name 2>/dev/null || echo "ewastedb")
+          MYSQL_FQDN=$(terraform output -raw mysql_fqdn 2>/dev/null || echo "mysql-ewastescalable-${TARGET_ENV}.mysql.database.azure.com")
+          MYSQL_DB=$(terraform output -raw mysql_database_name 2>/dev/null || echo "ewastescalabledb")
           MYSQL_USER=$(terraform output -raw mysql_admin_username 2>/dev/null || echo "ewasteadmin")
           KV_URI=$(terraform output -raw key_vault_uri 2>/dev/null || echo "")
           MYSQL_PASS="$MYSQL_DB_ADMIN_PASSWORD"
@@ -396,7 +399,7 @@ jobs:
             MYSQL_PASS=$(terraform output -raw mysql_admin_password 2>/dev/null || echo "")
           fi
           ACA_IDENTITY_ID=$(terraform output -raw aca_identity_id 2>/dev/null || echo "")
-          REDIS_ADDR="redis-ewaste-${TARGET_ENV}.redis.cache.windows.net:6380"
+          REDIS_ADDR="redis-ewastescalable-${TARGET_ENV}.redis.cache.windows.net:6380"
           REDIS_PASS="$REDIS_PASSWORD"
           if [ -z "$REDIS_PASS" ]; then
             REDIS_PASS=$(terraform output -raw redis_primary_access_key 2>/dev/null || echo "")
@@ -416,8 +419,8 @@ jobs:
 
           {
             echo "acr_server=${ACR_SERVER}"
-            echo "aca_env_name=cae-ewaste-${TARGET_ENV}"
-            echo "resource_group=rg-ewaste-${TARGET_ENV}"
+            echo "aca_env_name=cae-ewastescalable-${TARGET_ENV}"
+            echo "resource_group=rg-ewastescalable-${TARGET_ENV}"
             echo "mysql_fqdn=${MYSQL_FQDN}"
             echo "mysql_db=${MYSQL_DB}"
             echo "mysql_admin_username=${MYSQL_USER}"

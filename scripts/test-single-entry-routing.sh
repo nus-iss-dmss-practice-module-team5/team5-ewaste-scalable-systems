@@ -96,7 +96,7 @@ while [[ $# -gt 0 ]]; do
     --help|-h)
       echo "Usage: $0 [env] [options]"
       echo "Options:"
-      echo "  --entry-url URL        Public Entrypoint URL (e.g. https://aca-ewaste-prod-ui...)"
+      echo "  --entry-url URL        Public Entrypoint URL (e.g. https://aca-ewastescalable-prod-ui...)"
       echo "  --env, -e ENV          Target environment (dev, stg, prod)"
       echo "  --auth-fqdn FQDN       Internal Auth FQDN"
       echo "  --batch-fqdn FQDN      Internal Batch Workflow FQDN"
@@ -151,18 +151,18 @@ fi
 
 # Attempt to discover endpoints via Azure CLI if TARGET_ENV is supplied
 if [[ -z "$ENTRY_URL" ]] && [[ -n "$TARGET_ENV" ]] && command -v az >/dev/null 2>&1; then
-  RG="rg-ewaste-${TARGET_ENV}"
+  RG="rg-ewastescalable-${TARGET_ENV}"
   log_info "Discovering endpoints via Azure CLI in resource group $RG..."
-  UI_FQDN=$(az containerapp show --name "aca-ewaste-${TARGET_ENV}-ui" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+  UI_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-ui" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
   if [[ -n "$UI_FQDN" ]]; then
     ENTRY_URL="https://$UI_FQDN"
     log_info "Discovered public UI entrypoint: $ENTRY_URL"
   fi
-  [[ -z "$AUTH_FQDN" ]] && AUTH_FQDN=$(az containerapp show --name "aca-ewaste-${TARGET_ENV}-auth" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
-  [[ -z "$BATCH_FQDN" ]] && BATCH_FQDN=$(az containerapp show --name "aca-ewaste-${TARGET_ENV}-api" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
-  [[ -z "$CLAIM_FQDN" ]] && CLAIM_FQDN=$(az containerapp show --name "aca-ewaste-${TARGET_ENV}-claim" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
-  [[ -z "$CUSTODY_FQDN" ]] && CUSTODY_FQDN=$(az containerapp show --name "aca-ewaste-${TARGET_ENV}-custody" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
-  [[ -z "$ANALYTICS_FQDN" ]] && ANALYTICS_FQDN=$(az containerapp show --name "aca-ewaste-${TARGET_ENV}-analytics" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+  [[ -z "$AUTH_FQDN" ]] && AUTH_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-auth" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+  [[ -z "$BATCH_FQDN" ]] && BATCH_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-api" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+  [[ -z "$CLAIM_FQDN" ]] && CLAIM_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-claim" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+  [[ -z "$CUSTODY_FQDN" ]] && CUSTODY_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-custody" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+  [[ -z "$ANALYTICS_FQDN" ]] && ANALYTICS_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-analytic" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
 fi
 
 # Dry Run / Offline Configuration Validation Mode

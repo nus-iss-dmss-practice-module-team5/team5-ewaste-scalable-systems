@@ -218,7 +218,7 @@ resource "azurerm_mysql_flexible_server" "db" {
 }
 
 resource "azurerm_mysql_flexible_database" "ewastedb" {
-  name                = "ewastedb"
+  name                = "ewastescalabledb"
   resource_group_name = azurerm_resource_group.env_rg.name
   server_name         = azurerm_mysql_flexible_server.db.name
   charset             = "utf8mb4"
@@ -347,7 +347,7 @@ resource "azurerm_eventhub_consumer_group" "analytics_worker_claim" {
 
 # Shared authorization rule for application workloads (SASL/PLAIN connection string)
 resource "azurerm_eventhub_namespace_authorization_rule" "app_auth" {
-  name                = "auth-ewaste-workload"
+  name                = "auth-ewastescalable-workload"
   namespace_name      = azurerm_eventhub_namespace.kafka.name
   resource_group_name = azurerm_resource_group.env_rg.name
 
@@ -1629,7 +1629,7 @@ resource "azurerm_container_app" "ui" {
 
 # 6.6 Matching Worker Service (Python 3.12, Headless Consumer, Event Hubs Kafka Scaler)
 resource "azurerm_container_app" "matching_worker" {
-  name                         = "aca-${local.name_prefix}-matching-worker"
+  name                         = "aca-${local.name_prefix}-matcher"
   workload_profile_name        = "Consumption"
   container_app_environment_id = azurerm_container_app_environment.aca_env.id
   resource_group_name          = azurerm_resource_group.env_rg.name
@@ -1822,7 +1822,7 @@ resource "azurerm_container_app" "matching_worker" {
 # 6.7 Analytics Worker Service (Python 3.12, Event Hubs Kafka Scaler)
 # Retains address azurerm_container_app.analytics for test & output contract compatibility.
 resource "azurerm_container_app" "analytics" {
-  name                         = "aca-${local.name_prefix}-analytics"
+  name                         = "aca-${local.name_prefix}-analytic"
   workload_profile_name        = "Consumption"
   container_app_environment_id = azurerm_container_app_environment.aca_env.id
   resource_group_name          = azurerm_resource_group.env_rg.name
