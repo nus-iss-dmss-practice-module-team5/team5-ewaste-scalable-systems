@@ -44,10 +44,10 @@ const buildId = resolveBuildId();
 process.env.BUILD_ID = buildId;
 
 const serviceTargets = [
-  process.env.IDENTITY_ACCESS_URL,
-  process.env.BATCH_WORKFLOW_URL,
-  process.env.CLAIM_LOGISTICS_URL,
-  process.env.CUSTODY_VERIFICATION_URL,
+  process.env.IDENTITY_ACCESS_URL || process.env.AUTH_SERVICE_URL,
+  process.env.BATCH_WORKFLOW_URL || process.env.BATCH_SERVICE_URL,
+  process.env.CLAIM_LOGISTICS_URL || process.env.CLAIM_SERVICE_URL,
+  process.env.CUSTODY_VERIFICATION_URL || process.env.CUSTODY_SERVICE_URL,
 ];
 if (serviceTargets.some(Boolean) && !serviceTargets.every(Boolean)) {
   throw new Error("Set all four service URLs to enable split API routing.");

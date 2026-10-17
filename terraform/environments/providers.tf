@@ -45,7 +45,7 @@ provider "azurerm" {
 provider "azapi" {}
 
 locals {
-  name_prefix = "ewaste-${var.environment}"
+  name_prefix = "ewastescalable-${var.environment}"
 
   common_tags = {
     Project     = "Responsible E-Waste Chain-of-Custody"

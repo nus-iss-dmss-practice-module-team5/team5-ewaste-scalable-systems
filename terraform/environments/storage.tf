@@ -19,7 +19,7 @@ resource "azurerm_storage_account" "evidence" {
   # checkov:skip=CKV_AZURE_33:Storage logging for queues not applicable to blob-only evidence store.
   # checkov:skip=CKV_AZURE_3:Secure transfer is enabled via https_traffic_only_enabled=true and TLS 1.2+.
   # checkov:skip=CKV_AZURE_35:Public network access is disabled (Zero-Trust ADR D2) and network rules default to Deny.
-  name                              = "stgewaste${var.environment}"
+  name                              = "stgewastescalable${var.environment}"
   resource_group_name               = azurerm_resource_group.env_rg.name
   location                          = azurerm_resource_group.env_rg.location
   account_tier                      = "Standard"
@@ -102,14 +102,14 @@ resource "azurerm_private_dns_zone_virtual_network_link" "blob_dns_link" {
 }
 
 resource "azurerm_private_endpoint" "storage_pe" {
-  name                = "pe-stgewaste-${var.environment}"
+  name                = "pe-stgewastescalable-${var.environment}"
   location            = azurerm_resource_group.env_rg.location
   resource_group_name = azurerm_resource_group.env_rg.name
   subnet_id           = azurerm_subnet.private_endpoints_subnet.id
   tags                = local.common_tags
 
   private_service_connection {
-    name                           = "psc-stgewaste-${var.environment}"
+    name                           = "psc-stgewastescalable-${var.environment}"
     private_connection_resource_id = azurerm_storage_account.evidence.id
     subresource_names              = ["blob"]
     is_manual_connection           = false

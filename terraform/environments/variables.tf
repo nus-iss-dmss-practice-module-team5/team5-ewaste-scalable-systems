@@ -22,19 +22,19 @@ variable "tenant_id" {
 
 variable "shared_rg_name" {
   type        = string
-  default     = "rg-ewaste-shared"
+  default     = "rg-ewastescalable-shared"
   description = "Name of the shared persistent resource group."
 }
 
 variable "shared_acr_name" {
   type        = string
-  default     = "acrewastescale"
+  default     = "acrewastescalable"
   description = "Name of the shared Azure Container Registry."
 }
 
 variable "shared_log_analytics_name" {
   type        = string
-  default     = "log-ewaste-centralized"
+  default     = "log-ewastescalable-centralized"
   description = "Name of the shared Log Analytics Workspace."
 }
 
