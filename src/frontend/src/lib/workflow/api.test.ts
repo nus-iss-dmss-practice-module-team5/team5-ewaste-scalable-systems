@@ -776,6 +776,70 @@ describe("workflow api", () => {
     expect(post.mock.calls[1]?.[1]).toEqual({});
   });
 
+  it("keeps the current_state snapshot from a STALE_VERSION answer", async () => {
+    post.mockRejectedValue(
+      axiosError(409, {
+        code: "STALE_VERSION",
+        message: "The resource has changed. Refresh and retry.",
+        correlation_id: "corr-stale",
+        current_state: {
+          assignment_id: "asg-1",
+          assignment_status: "SUPERSEDED",
+          assignment_version: 4,
+          batch_id: "batch-1",
+          batch_status: "ASSIGNED",
+          batch_version: 9,
+          current_assignment_id: "asg-2",
+        },
+      }),
+    );
+
+    await expect(
+      reportFailedPickup(
+        "token",
+        "asg-1",
+        1,
+        { failureReason: "DONOR_UNAVAILABLE" },
+        "idem-stale",
+      ),
+    ).rejects.toMatchObject({
+      kind: "conflict",
+      code: "STALE_VERSION",
+      status: 409,
+      correlationId: "corr-stale",
+      currentState: {
+        assignmentId: "asg-1",
+        assignmentStatus: "SUPERSEDED",
+        assignmentVersion: 4,
+        batchId: "batch-1",
+        batchStatus: "ASSIGNED",
+        batchVersion: 9,
+        currentAssignmentId: "asg-2",
+      },
+    });
+  });
+
+  it("drops an incomplete current_state", async () => {
+    post.mockRejectedValue(
+      axiosError(409, {
+        code: "STALE_VERSION",
+        message: "changed",
+        correlation_id: "corr-stale",
+        current_state: { assignment_id: "asg-1", batch_version: "9" },
+      }),
+    );
+
+    const error = await reportFailedPickup(
+      "token",
+      "asg-1",
+      1,
+      { failureReason: "DONOR_UNAVAILABLE" },
+      "idem-stale",
+    ).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: "STALE_VERSION" });
+    expect((error as { currentState?: unknown }).currentState).toBeUndefined();
+  });
+
   it("maps a rejected receipt to a validation error", async () => {
     post.mockRejectedValue(
       axiosError(422, {

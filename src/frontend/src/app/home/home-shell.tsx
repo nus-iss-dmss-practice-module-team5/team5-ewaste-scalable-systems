@@ -2,22 +2,30 @@
 
 import { ROLE_HOME_TITLE, ROLE_LABEL, ROLE_NAV } from "@/lib/auth/roles";
 import { useSession } from "@/lib/auth/session-context";
+import { useOfflineSync } from "@/lib/offline/offline-sync-context";
+import type { OfflineDraft } from "@/lib/offline/types";
 import { useState } from "react";
 import { ClaimAction } from "./claim-action";
 import { CollectorWork } from "./collector-work";
 import { CustodyView } from "./custody";
 import { DonorBatchForm, DonorBatchList } from "./donor-batches";
 import { ImpactView } from "./impact";
+import { DraftsView } from "./offline/drafts-view";
+import { SyncStatus } from "./offline/sync-status";
 import { OpportunityView } from "./opportunities";
 import { ProcessingWork } from "./processing";
 import { Banner } from "./workflow-ui";
 
 export function HomeShell() {
   const { session, justRenewed, logout, offlineUser, isOffline } = useSession();
+  const sync = useOfflineSync();
   const [activeNav, setActiveNav] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   // The batch an Auditor opened from the Impact list.
   const [custodyBatchId, setCustodyBatchId] = useState<string>();
+  // A REJECTED draft the collector chose to fix in Drafts: Assignments opens
+  // its form filled from the draft, with the server's message.
+  const [fixDraft, setFixDraft] = useState<OfflineDraft>();
 
   // Offline, the last user on this device may open the shell without a
   // session. Only the collector's saved assignments work then.
@@ -50,9 +58,16 @@ export function HomeShell() {
     ) : user.role === "RECYCLER" && current === "processing" ? (
       <ProcessingWork />
     ) : user.role === "COLLECTOR" && current === "assignments" ? (
-      <CollectorWork />
+      <CollectorWork fix={fixDraft} onFixDone={() => setFixDraft(undefined)} />
     ) : user.role === "COLLECTOR" && current === "history" ? (
       <CollectorWork history />
+    ) : user.role === "COLLECTOR" && current === "drafts" ? (
+      <DraftsView
+        onFix={(draft) => {
+          setFixDraft(draft);
+          setActiveNav("assignments");
+        }}
+      />
     ) : user.role === "AUDITOR" && current === "custody" ? (
       <CustodyView initialBatchId={custodyBatchId} />
     ) : user.role === "AUDITOR" && current === "impact" ? (
@@ -63,6 +78,11 @@ export function HomeShell() {
         }}
       />
     ) : null;
+
+  // Drafts not yet synced, shown on the collector's Drafts nav item.
+  const unsynced = worksOffline
+    ? sync.drafts.filter((draft) => draft.state !== "SYNCED").length
+    : 0;
 
   async function onLogout() {
     setLoggingOut(true);
@@ -83,12 +103,24 @@ export function HomeShell() {
             <button
               key={item.id}
               type="button"
-              onClick={() => setActiveNav(item.id)}
+              onClick={() => {
+                setFixDraft(undefined);
+                setActiveNav(item.id);
+              }}
               className={`shrink-0 rounded-md px-3 py-2 text-left text-sm whitespace-nowrap ${
                 current === item.id ? "bg-teal-700" : "hover:bg-teal-800"
               }`}
             >
               {item.label}
+              {item.id === "drafts" && unsynced > 0 ? (
+                <span
+                  data-testid="nav-drafts-count"
+                  aria-label={`${unsynced} not synced`}
+                  className="ml-2 rounded-full bg-amber-300 px-2 py-0.5 text-xs font-semibold text-amber-950"
+                >
+                  {unsynced}
+                </span>
+              ) : null}
             </button>
           ))}
         </nav>
@@ -96,6 +128,19 @@ export function HomeShell() {
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 border-b border-slate-200 bg-white px-4 py-3 md:px-6">
+          {worksOffline ? (
+            <div className="mr-auto">
+              <SyncStatus
+                online={sync.online}
+                pending={sync.pending}
+                syncing={sync.syncing}
+                stoppedReason={sync.stoppedReason}
+                lastSyncAt={sync.lastSyncAt}
+                // Offline mode has no token, so there is nothing to sync with.
+                onSyncNow={session ? sync.syncNow : undefined}
+              />
+            </div>
+          ) : null}
           <span
             className="rounded-full bg-teal-50 px-3 py-1 text-sm font-medium text-teal-900"
             aria-label={`Role ${ROLE_LABEL[user.role]}`}
@@ -129,11 +174,15 @@ export function HomeShell() {
             <div className="mb-4 max-w-xl">
               <Banner testId="offline-banner" tone="warning">
                 {worksOffline
-                  ? "You're offline. Showing assignments saved on this device."
+                  ? "You're offline. Showing assignments saved on this device. Recorded pickups and failed pickups are saved on this phone and sync later."
                   : "You're offline."}
                 {session
-                  ? " Actions need a connection."
-                  : " Sign in again when you're back online."}
+                  ? worksOffline
+                    ? " Other actions need a connection."
+                    : " Actions need a connection."
+                  : worksOffline
+                    ? " Sign in again when you're back online to send them."
+                    : " Sign in again when you're back online."}
               </Banner>
             </div>
           ) : null}

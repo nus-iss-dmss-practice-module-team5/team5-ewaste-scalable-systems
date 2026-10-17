@@ -14,8 +14,8 @@ import {
   queueDeviceWrite,
 } from "@/lib/offline/device-writes";
 import { getLastUser, setLastUser } from "@/lib/offline/meta";
-import { SessionProvider, useSession } from "./session-context";
-import type { Session, SessionUser } from "./types";
+import { RENEW_RETRY_MS, SessionProvider, useSession } from "./session-context";
+import type { RenewResult, Session, SessionUser } from "./types";
 
 const refreshSession = vi.fn();
 const logoutSession = vi.fn();
@@ -306,6 +306,36 @@ describe("SessionProvider offline support", () => {
     expect(replaceLocation).not.toHaveBeenCalled();
   });
 
+  it("retries the refresh later when the service is unreachable but the browser is online", async () => {
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
+    sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(sessionFor(collector, { accessInMs: 0 })),
+    );
+    refreshSession.mockRejectedValueOnce({
+      code: "AUTH_SERVICE_UNAVAILABLE",
+      message: "Could not reach the sign-in service. Try again.",
+      correlationId: "corr-network",
+    });
+    refreshSession.mockResolvedValueOnce(
+      sessionFor(collector, { token: "renewed" }),
+    );
+    renderProvider();
+    const retryCall = () =>
+      setTimeoutSpy.mock.calls.find(([, ms]) => ms === RENEW_RETRY_MS);
+    await waitFor(() => expect(retryCall()).toBeDefined());
+    expect(screen.getByTestId("session-token")).toHaveTextContent("access");
+
+    act(() => {
+      (retryCall()![0] as () => void)();
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("session-token")).toHaveTextContent("renewed"),
+    );
+    expect(refreshSession).toHaveBeenCalledTimes(2);
+    expect(replaceLocation).not.toHaveBeenCalled();
+  });
+
   it("waits for the connection before refreshing while offline", async () => {
     sessionStorage.setItem(
       STORAGE_KEY,
@@ -465,5 +495,161 @@ describe("SessionProvider offline support", () => {
     release();
     await deviceWritesSettled();
     expect(await getLastUser()).toBeNull();
+  });
+});
+
+describe("SessionProvider renew", () => {
+  const captured: { current: ReturnType<typeof useSession> | null } = {
+    current: null,
+  };
+
+  function Capture() {
+    const value = useSession();
+    useEffect(() => {
+      captured.current = value;
+    });
+    return null;
+  }
+
+  function context() {
+    if (!captured.current) {
+      throw new Error("provider not rendered");
+    }
+    return captured.current;
+  }
+
+  function renderSignedIn(session = sessionFor(collector)) {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    return render(
+      <SessionProvider>
+        <Probe />
+        <Capture />
+      </SessionProvider>,
+    );
+  }
+
+  beforeEach(async () => {
+    await resetOfflineDbForTests();
+    sessionStorage.clear();
+    refreshSession.mockReset();
+    replaceLocation.mockReset();
+    captured.current = null;
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    await deviceWritesSettled();
+    delete (window.navigator as unknown as Record<string, unknown>).onLine;
+    vi.restoreAllMocks();
+  });
+
+  it("exposes the current access token", async () => {
+    renderSignedIn();
+    await waitFor(() => expect(context().getAccessToken()).toBe("access"));
+  });
+
+  it("gives the token for a user id only when the session is that user's", async () => {
+    renderSignedIn();
+    await waitFor(() => expect(context().getAccessToken()).toBe("access"));
+    expect(context().getAccessToken(collector.id)).toBe("access");
+    expect(context().getAccessToken("USR-OTHER")).toBeNull();
+  });
+
+  it("shares one refresh between concurrent callers and has the new token in place", async () => {
+    renderSignedIn();
+    await waitFor(() => expect(context().getAccessToken()).toBe("access"));
+    let resolve!: (session: Session) => void;
+    refreshSession.mockImplementationOnce(
+      () => new Promise<Session>((r) => (resolve = r)),
+    );
+
+    let first!: Promise<RenewResult>;
+    let second!: Promise<RenewResult>;
+    act(() => {
+      first = context().renew();
+      second = context().renew();
+    });
+    expect(second).toBe(first);
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+    expect(refreshSession).toHaveBeenCalledWith("refresh-access", collector);
+
+    const renewed = sessionFor(collector, { token: "renewed" });
+    let tokenAtResolve: string | null = null;
+    await act(async () => {
+      resolve(renewed);
+      tokenAtResolve = await first.then(() => context().getAccessToken());
+    });
+    await expect(first).resolves.toBe("renewed");
+    await expect(second).resolves.toBe("renewed");
+    expect(tokenAtResolve).toBe("renewed");
+    expect(screen.getByTestId("session-token")).toHaveTextContent("renewed");
+
+    // The next renewal uses the rotated refresh token.
+    refreshSession.mockResolvedValueOnce(
+      sessionFor(collector, { token: "again" }),
+    );
+    await act(async () => {
+      await expect(context().renew()).resolves.toBe("renewed");
+    });
+    expect(refreshSession).toHaveBeenLastCalledWith(
+      "refresh-renewed",
+      collector,
+    );
+    expect(context().getAccessToken()).toBe("again");
+  });
+
+  it("expires the session when the refresh token is rejected", async () => {
+    renderSignedIn();
+    await waitFor(() => expect(context().getAccessToken()).toBe("access"));
+    refreshSession.mockRejectedValueOnce({
+      code: "AUTH_INVALID_SESSION",
+      message: "Session expired. Please sign in again.",
+      correlationId: "corr-401",
+    });
+    await act(async () => {
+      await expect(context().renew()).resolves.toBe("rejected");
+    });
+    expect(context().getAccessToken()).toBeNull();
+    expect(screen.getByTestId("session-token")).toHaveTextContent("");
+    expect(replaceLocation).toHaveBeenCalledWith("/login?expired=1");
+  });
+
+  it("keeps the session when the sign-in service cannot be reached", async () => {
+    renderSignedIn();
+    await waitFor(() => expect(context().getAccessToken()).toBe("access"));
+    refreshSession.mockRejectedValueOnce({
+      code: "AUTH_SERVICE_UNAVAILABLE",
+      message: "Could not reach the sign-in service. Try again.",
+      correlationId: "corr-network",
+    });
+    await act(async () => {
+      await expect(context().renew()).resolves.toBe("unreachable");
+    });
+    expect(context().getAccessToken()).toBe("access");
+    expect(screen.getByTestId("session-token")).toHaveTextContent("access");
+    expect(replaceLocation).not.toHaveBeenCalled();
+  });
+
+  it("does not call the service while offline", async () => {
+    renderSignedIn();
+    await waitFor(() => expect(context().getAccessToken()).toBe("access"));
+    setNetwork(false);
+    await act(async () => {
+      await expect(context().renew()).resolves.toBe("unreachable");
+    });
+    expect(refreshSession).not.toHaveBeenCalled();
+    expect(context().getAccessToken()).toBe("access");
+  });
+
+  it("resolves rejected without a session", async () => {
+    render(
+      <SessionProvider>
+        <Capture />
+      </SessionProvider>,
+    );
+    await waitFor(() => expect(context().ready).toBe(true));
+    await expect(context().renew()).resolves.toBe("rejected");
+    expect(context().getAccessToken()).toBeNull();
+    expect(refreshSession).not.toHaveBeenCalled();
   });
 });

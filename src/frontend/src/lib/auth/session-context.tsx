@@ -34,7 +34,12 @@ import {
   replaceLocation,
   writeStoredSession,
 } from "./storage";
-import { isAuthError, type Session, type SessionUser } from "./types";
+import {
+  isAuthError,
+  type RenewResult,
+  type Session,
+  type SessionUser,
+} from "./types";
 
 type SessionContextValue = {
   session: Session | null;
@@ -50,12 +55,28 @@ type SessionContextValue = {
    * call the API.
    */
   offlineUser?: SessionUser | null;
+  /**
+   * Renews the session with its refresh token. Single-flight: concurrent
+   * callers (the refresh timer, the sync run) share one request, because the
+   * refresh token rotates. Resolves "renewed" once the new session is in
+   * place (getAccessToken returns the new token). A rejected refresh token
+   * expires the session and resolves "rejected", as does having no session.
+   * Offline or a network failure resolves "unreachable" and keeps the session.
+   */
+  renew: () => Promise<RenewResult>;
+  /**
+   * The current access token, read without waiting for a re-render. With
+   * `userId`, null unless the current session belongs to that user.
+   */
+  getAccessToken: (userId?: string) => string | null;
 };
 
 // Reading IndexedDB must not keep the app on "Loading…" forever.
 const LAST_USER_TIMEOUT_MS = 1500;
 // Clearing this device on sign-out must not hang sign-out forever either.
 const SIGN_OUT_CLEAR_TIMEOUT_MS = 2000;
+// After a refresh fails while the browser reports a connection, try again.
+export const RENEW_RETRY_MS = 30_000;
 
 const TIMED_OUT = Symbol("timed out");
 
@@ -127,6 +148,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [justRenewed, setJustRenewed] = useState(false);
   const [lastUser, setLastUserState] = useState<SessionUser | null>(null);
   const sessionRef = useRef<Session | null>(null);
+  // The refresh in progress, shared by every caller of renew().
+  const renewing = useRef<Promise<RenewResult> | null>(null);
   const lastUserRef = useRef<SessionUser | null>(null);
   // Bumped whenever lastUser is set by sign-in or sign-out, so a slower
   // startup read of IndexedDB cannot overwrite a newer value.
@@ -164,6 +187,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const timer = window.setTimeout(async () => {
       const stored = readStoredSession();
       if (stored && stored.refreshExpiresAt > Date.now()) {
+        sessionRef.current = stored;
         setSessionState(stored);
         setReady(true);
         return;
@@ -245,11 +269,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const setSession = useCallback((next: Session) => {
     setJustRenewed(false);
     writeStoredSession(next);
+    sessionRef.current = next;
     setSessionState(next);
   }, []);
 
   const expireSession = useCallback(() => {
     setJustRenewed(false);
+    sessionRef.current = null;
     setSessionState(null);
     writeStoredSession(null);
     if (isBrowserOffline() && lastUserRef.current) {
@@ -281,10 +307,67 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       console.warn("Signing out before saved data on this device was cleared.");
     }
     setJustRenewed(false);
+    sessionRef.current = null;
     setSessionState(null);
     writeStoredSession(null);
     setLastUserState(null);
     replaceLocation(LOGIN_PATH);
+  }, []);
+
+  const renew = useCallback((): Promise<RenewResult> => {
+    if (renewing.current) {
+      return renewing.current;
+    }
+    const current = sessionRef.current;
+    if (!current) {
+      return Promise.resolve("rejected");
+    }
+    if (isBrowserOffline()) {
+      // Refreshing needs the network. Wait for the connection.
+      refreshWaiting.current = true;
+      return Promise.resolve("unreachable");
+    }
+    const run = (async (): Promise<RenewResult> => {
+      try {
+        const next = await refreshSession(
+          current.tokens.refreshToken,
+          current.user,
+        );
+        if (sessionRef.current !== current) {
+          // Signed out or replaced while the refresh was in flight.
+          return "rejected";
+        }
+        sessionRef.current = next;
+        writeStoredSession(next);
+        setSessionState(next);
+        setJustRenewed(true);
+        return "renewed";
+      } catch (error) {
+        if (sessionRef.current !== current) {
+          return "rejected";
+        }
+        if (isNetworkFailure(error)) {
+          // The sign-in service could not be reached. Keep the session and
+          // retry when the connection returns.
+          refreshWaiting.current = true;
+          return "unreachable";
+        }
+        expireSession();
+        return "rejected";
+      }
+    })().finally(() => {
+      renewing.current = null;
+    });
+    renewing.current = run;
+    return run;
+  }, [expireSession]);
+
+  const getAccessToken = useCallback((userId?: string) => {
+    const current = sessionRef.current;
+    if (!current || (userId !== undefined && current.user.id !== userId)) {
+      return null;
+    }
+    return current.tokens.accessToken;
   }, []);
 
   useEffect(() => {
@@ -320,37 +403,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       };
     }
 
+    let retryTimer: number | undefined;
     const refresh = async () => {
-      const current = sessionRef.current;
-      if (cancelled || !current) {
+      if (cancelled || !sessionRef.current) {
         return;
       }
-      if (isBrowserOffline()) {
-        // Refreshing needs the network. Wait for the connection.
-        refreshWaiting.current = true;
-        return;
-      }
-      try {
-        const next = await refreshSession(
-          current.tokens.refreshToken,
-          current.user,
+      const result = await renew();
+      if (
+        result === "unreachable" &&
+        !cancelled &&
+        sessionRef.current === session &&
+        !isBrowserOffline()
+      ) {
+        // The service was unreachable although the browser reports a
+        // connection: try again later. Offline, the online event retries.
+        retryTimer = window.setTimeout(
+          () => setRefreshRetry((count) => count + 1),
+          RENEW_RETRY_MS,
         );
-        if (cancelled) {
-          return;
-        }
-        setSessionState(next);
-        setJustRenewed(true);
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-        if (isNetworkFailure(error) && isBrowserOffline()) {
-          // The connection dropped mid-refresh. Keep the session and retry
-          // when it returns.
-          refreshWaiting.current = true;
-          return;
-        }
-        expireSession();
       }
     };
     const refreshTimer = window.setTimeout(refresh, accessDelay);
@@ -364,9 +434,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
       window.clearTimeout(refreshTimer);
+      window.clearTimeout(retryTimer);
       window.clearTimeout(hardExpiry);
     };
-  }, [session, expireSession, refreshRetry]);
+  }, [session, expireSession, renew, refreshRetry]);
 
   // Offline mode keys off navigator.onLine only. A device that reports a
   // connection while the server is down gets no offlineUser, so a cached
@@ -383,8 +454,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       logout,
       isOffline,
       offlineUser,
+      renew,
+      getAccessToken,
     }),
-    [session, ready, justRenewed, setSession, logout, isOffline, offlineUser],
+    [
+      session,
+      ready,
+      justRenewed,
+      setSession,
+      logout,
+      isOffline,
+      offlineUser,
+      renew,
+      getAccessToken,
+    ],
   );
 
   return (
