@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -9,11 +10,13 @@ from pathlib import Path
 
 import plan_services as ps
 
-REAL_CATALOG = Path(__file__).resolve().parents[2] / ".github" / "service-catalog.json"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+REAL_CATALOG = REPO_ROOT / ".github" / "service-catalog.json"
+TERRAFORM_ENV = REPO_ROOT / "terraform" / "environments"
 GO_SERVICES = ["identity-access", "batch-workflow", "claim-logistics", "custody-verification"]
-TODAY_APPS = {f"aca-ewaste-dev-{app}" for app in ("api", "ui", "analytics")}
-ALL_APPS = {f"aca-ewaste-dev-{app}" for app in
-            ("auth", "api", "claim", "custody", "matching-worker", "analytics", "ui")}
+TODAY_APPS = {f"aca-ewastescalable-dev-{app}" for app in ("api", "ui", "analytic")}
+ALL_APPS = {f"aca-ewastescalable-dev-{app}" for app in
+            ("auth", "api", "claim", "custody", "matcher", "analytic", "ui")}
 
 
 def write(root: Path, relative: str, text: str = "") -> None:
@@ -153,7 +156,7 @@ class TodayOnDevTests(PlanTestCase):
             self.run_plan(services=["claim-logistics"], environment="dev", apps=TODAY_APPS)
 
     def test_partial_apps_still_ship_the_combined_api(self):
-        apps = TODAY_APPS | {"aca-ewaste-dev-auth"}
+        apps = TODAY_APPS | {"aca-ewastescalable-dev-auth"}
         names, skipped, _ = self.run_plan(services=["all"], environment="dev", apps=apps)
         self.assertEqual(names, ["workflow-api", "workflow-analytics", "ui"])
         self.assertIn("cannot ship together", skipped["identity-access"])
@@ -182,10 +185,10 @@ class AfterSplitTests(PlanTestCase):
     def test_single_service_by_name(self):
         names, _, result = self.run_plan(services=["ui"], environment="dev", apps=ALL_APPS)
         self.assertEqual(names, ["ui"])
-        self.assertEqual(result["include"][0]["app_name"], "aca-ewaste-dev-ui")
+        self.assertEqual(result["include"][0]["app_name"], "aca-ewastescalable-dev-ui")
 
     def test_missing_matching_app_keeps_the_combined_worker(self):
-        apps = ALL_APPS - {"aca-ewaste-dev-matching-worker"}
+        apps = ALL_APPS - {"aca-ewastescalable-dev-matcher"}
         names, skipped, _ = self.run_plan(changed=["src/matcher/matcher/runtime.py"],
                                           environment="dev", apps=apps)
         # The analytics-only image must not replace the combined worker while
@@ -230,3 +233,21 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TerraformNamingTests(unittest.TestCase):
+    """The planner lists and updates the apps Terraform creates, so their names must agree."""
+
+    def test_app_prefix_matches_terraform_name_prefix(self):
+        providers = (TERRAFORM_ENV / "providers.tf").read_text(encoding="utf-8")
+        match = re.search(r'name_prefix\s*=\s*"([a-z0-9-]+)-\$\{var\.environment\}"', providers)
+        self.assertIsNotNone(match, "name_prefix not found in terraform/environments/providers.tf")
+        self.assertEqual(ps.APP_PREFIX, f"aca-{match.group(1)}")
+
+    def test_every_catalog_app_is_provisioned_by_terraform(self):
+        main = (TERRAFORM_ENV / "main.tf").read_text(encoding="utf-8")
+        provisioned = set(re.findall(r'name\s*=\s*"aca-\$\{local\.name_prefix\}-([a-z0-9-]+)"', main))
+        self.assertTrue(provisioned, "no container apps found in terraform/environments/main.tf")
+        catalog = ps.load_catalog(REAL_CATALOG)
+        missing = sorted({s["app"] for s in catalog["services"]} - provisioned)
+        self.assertEqual(missing, [], f"catalog apps with no Terraform container app: {missing}")

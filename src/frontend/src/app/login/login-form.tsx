@@ -1,12 +1,14 @@
 "use client";
 
+import { HOME_PATH } from "@/lib/auth/config";
 import { login } from "@/lib/auth/login";
 import { useSession } from "@/lib/auth/session-context";
 import { isAuthError } from "@/lib/auth/types";
+import Link from "next/link";
 import { FormEvent, useId, useState } from "react";
 
 export function LoginForm({ expired = false }: { expired?: boolean }) {
-  const { setSession } = useSession();
+  const { setSession, isOffline, offlineUser } = useSession();
   const errorId = useId();
   const emailId = useId();
   const passwordId = useId();
@@ -18,6 +20,10 @@ export function LoginForm({ expired = false }: { expired?: boolean }) {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // Signing in needs the network; the offline banner already says so.
+    if (isOffline) {
+      return;
+    }
     setError(null);
     setLoading(true);
     try {
@@ -52,6 +58,26 @@ export function LoginForm({ expired = false }: { expired?: boolean }) {
       aria-busy={loading ? true : undefined}
       data-testid="login-form"
     >
+      {isOffline ? (
+        <div
+          role="status"
+          data-testid="login-offline"
+          className="flex flex-col gap-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+        >
+          <span>You&apos;re offline. Connect to the internet to sign in.</span>
+          {offlineUser ? (
+            <Link
+              href={HOME_PATH}
+              data-testid="login-offline-continue"
+              className="font-medium text-teal-800 underline"
+            >
+              {offlineUser.role === "COLLECTOR"
+                ? `Open assignments saved for ${offlineUser.name}`
+                : `Continue offline as ${offlineUser.name}`}
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
       {banner ? (
         <div
           id={errorId}
@@ -133,7 +159,7 @@ export function LoginForm({ expired = false }: { expired?: boolean }) {
 
       <button
         type="submit"
-        disabled={loading}
+        disabled={loading || isOffline}
         data-testid="login-submit"
         className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-900 disabled:cursor-wait disabled:opacity-70"
       >

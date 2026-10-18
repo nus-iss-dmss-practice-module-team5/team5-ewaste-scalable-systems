@@ -1,5 +1,5 @@
 // Run this entire file. Adjust AppPrefix and Lookback for your environment.
-let AppPrefix = "aca-ewaste-dev-";
+let AppPrefix = "aca-ewastescalable-dev-";
 let Lookback = 1h;
 let Signals = union isfuzzy=true
     (ContainerAppConsoleLogs_CL | project TimeGenerated, App=tostring(ContainerAppName_s), Message=tostring(Log_s)),

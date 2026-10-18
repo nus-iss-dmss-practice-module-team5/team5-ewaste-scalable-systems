@@ -211,12 +211,12 @@ jobs:
           fi
 
           # Deterministic Infrastructure Topology Bindings
-          echo "resource_group=rg-ewaste-${TARGET}" >> $GITHUB_OUTPUT
+          echo "resource_group=rg-ewastescalable-${TARGET}" >> $GITHUB_OUTPUT
 
           echo "========================================================"
           echo " Target Environment: $TARGET"
           echo " Trigger Reason: $DESC"
-          echo " Resource Group: rg-ewaste-${TARGET}"
+          echo " Resource Group: rg-ewastescalable-${TARGET}"
           echo "========================================================"
 
   # ============================================================================
@@ -330,11 +330,11 @@ jobs:
         run: |
           set -euo pipefail
           fqdn() {
-            grep -qx "aca-ewaste-${TARGET_ENV}-$1" existing-apps.txt || return 0
-            az containerapp show --name "aca-ewaste-${TARGET_ENV}-$1" --resource-group "$RG" \
+            grep -qx "aca-ewastescalable-${TARGET_ENV}-$1" existing-apps.txt || return 0
+            az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-$1" --resource-group "$RG" \
               --query properties.configuration.ingress.fqdn --output tsv
           }
-          API=$(fqdn api); UI=$(fqdn ui); ANALYTICS=$(fqdn analytics)
+          API=$(fqdn api); UI=$(fqdn ui); ANALYTICS=$(fqdn analytic)
 
           ARGS="NEXT_PUBLIC_USE_MOCK_AUTH=false"
           if [ -n "$API" ]; then

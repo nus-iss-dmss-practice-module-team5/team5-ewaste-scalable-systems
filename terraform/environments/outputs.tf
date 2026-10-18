@@ -76,9 +76,9 @@ output "kafka_topics" {
   description = "List of provisioned canonical Kafka topics."
 }
 
-output "aca_api_fqdn" {
-  value       = azurerm_container_app.api.ingress[0].fqdn
-  description = "The FQDN of the Backend API Container App."
+output "public_entrypoint_url" {
+  value       = "https://${azurerm_container_app.ui.ingress[0].fqdn}"
+  description = "Single public HTTPS entrypoint URL routing UI and API requests (Decision AD4)."
 }
 
 output "aca_ui_fqdn" {
@@ -86,9 +86,34 @@ output "aca_ui_fqdn" {
   description = "The FQDN of the Frontend UI Container App."
 }
 
+output "aca_api_fqdn" {
+  value       = azurerm_container_app.api.ingress[0].fqdn
+  description = "The FQDN of the Backend API / Batch Workflow Container App."
+}
+
 output "aca_analytics_fqdn" {
   value       = azurerm_container_app.analytics.ingress[0].fqdn
   description = "The FQDN of the Analytics Worker Container App."
+}
+
+output "aca_auth_fqdn" {
+  value       = azurerm_container_app.auth.ingress[0].fqdn
+  description = "The internal FQDN of the Identity & Access Container App."
+}
+
+output "aca_claim_fqdn" {
+  value       = azurerm_container_app.claim.ingress[0].fqdn
+  description = "The internal FQDN of the Claim Logistics Container App."
+}
+
+output "aca_custody_fqdn" {
+  value       = azurerm_container_app.custody.ingress[0].fqdn
+  description = "The internal FQDN of the Custody & Verification Container App."
+}
+
+output "aca_matching_worker_id" {
+  value       = azurerm_container_app.matching_worker.id
+  description = "The Resource ID of the Matching Worker Container App."
 }
 
 # ============================================================================

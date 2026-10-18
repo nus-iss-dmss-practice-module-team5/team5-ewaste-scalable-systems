@@ -78,7 +78,7 @@
       "dockerfile": "src/matcher/Dockerfile",
       "context": ".",
       "target": "matching-worker",
-      "app": "matching-worker",
+      "app": "matcher",
       "paths": ["src/matcher/", "contracts/matching/"]
     },
     {
@@ -88,7 +88,7 @@
       "dockerfile": "src/matcher/Dockerfile",
       "context": ".",
       "target": "analytics-worker",
-      "app": "analytics",
+      "app": "analytic",
       "deploy_mode": "matcher-script",
       "paths": ["src/matcher/", "contracts/matching/", "scripts/deploy-matcher.sh"],
       "requires_services": ["matching-worker"]
@@ -99,7 +99,7 @@
       "image": "workflow-analytics",
       "dockerfile": "src/matcher/Dockerfile",
       "context": ".",
-      "app": "analytics",
+      "app": "analytic",
       "deploy_mode": "matcher-script",
       "paths": ["src/matcher/", "contracts/matching/", "scripts/deploy-matcher.sh"],
       "replaced_by": "analytics-worker"

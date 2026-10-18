@@ -10,7 +10,7 @@ every planner input (the catalogue, the pipeline files, `scripts/ci/` and the
 matcher contracts), so a change to any of them reaches the planner. After it
 resolves the target environment:
 
-1. **Plan Services** lists the container apps in `rg-ewaste-<env>` and runs
+1. **Plan Services** lists the container apps in `rg-ewastescalable-<env>` and runs
    `scripts/ci/plan_services.py` against `.github/service-catalog.json`. The
    job summary shows each service, whether it ships and why.
 2. **Ship** runs `service-pipeline.yml` once per planned service, in parallel.

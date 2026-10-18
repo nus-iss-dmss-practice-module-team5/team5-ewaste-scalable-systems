@@ -262,8 +262,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$TARGET_ENV" =~ ^(dev|stg|prod)$ ]] || { echo "::error::Invalid environment '$TARGET_ENV'."; exit 1; }
-          [[ "$APP_NAME" == "aca-ewaste-${TARGET_ENV}-"* ]] || { echo "::error::App '$APP_NAME' is not in $TARGET_ENV."; exit 1; }
-          [[ "$RG" == "rg-ewaste-${TARGET_ENV}" ]] || { echo "::error::Resource group '$RG' is not $TARGET_ENV's."; exit 1; }
+          [[ "$APP_NAME" == "aca-ewastescalable-${TARGET_ENV}-"* ]] || { echo "::error::App '$APP_NAME' is not in $TARGET_ENV."; exit 1; }
+          [[ "$RG" == "rg-ewastescalable-${TARGET_ENV}" ]] || { echo "::error::Resource group '$RG' is not $TARGET_ENV's."; exit 1; }
 
       - name: Log in to Azure Container Registry
         env:

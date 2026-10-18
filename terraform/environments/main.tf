@@ -217,9 +217,8 @@ resource "azurerm_mysql_flexible_server" "db" {
   }
 }
 
-
 resource "azurerm_mysql_flexible_database" "ewastedb" {
-  name                = "ewastedb"
+  name                = "ewastescalabledb"
   resource_group_name = azurerm_resource_group.env_rg.name
   server_name         = azurerm_mysql_flexible_server.db.name
   charset             = "utf8mb4"
@@ -302,7 +301,7 @@ resource "azurerm_eventhub" "topics" {
   message_retention   = 1
 }
 
-# Dedicated consumer group for Python matching-worker on 'ewaste.batch.events'
+# Dedicated consumer groups for Python workers on 'ewaste.batch.events'
 resource "azurerm_eventhub_consumer_group" "matching_worker" {
   name                = "matching-worker"
   namespace_name      = azurerm_eventhub_namespace.kafka.name
@@ -310,7 +309,13 @@ resource "azurerm_eventhub_consumer_group" "matching_worker" {
   resource_group_name = azurerm_resource_group.env_rg.name
 }
 
-# Dedicated consumer group for trusted workflow readers on 'ewaste.batch.events'
+resource "azurerm_eventhub_consumer_group" "matching_worker_v1" {
+  name                = "matching-worker-v1"
+  namespace_name      = azurerm_eventhub_namespace.kafka.name
+  eventhub_name       = azurerm_eventhub.topics["ewaste.batch.events"].name
+  resource_group_name = azurerm_resource_group.env_rg.name
+}
+
 resource "azurerm_eventhub_consumer_group" "workflow_readers" {
   name                = "workflow-readers"
   namespace_name      = azurerm_eventhub_namespace.kafka.name
@@ -318,9 +323,15 @@ resource "azurerm_eventhub_consumer_group" "workflow_readers" {
   resource_group_name = azurerm_resource_group.env_rg.name
 }
 
-# Dedicated consumer group for Python analytics-worker on 'ewaste.batch.events'
 resource "azurerm_eventhub_consumer_group" "analytics_worker_batch" {
   name                = "analytics-worker"
+  namespace_name      = azurerm_eventhub_namespace.kafka.name
+  eventhub_name       = azurerm_eventhub.topics["ewaste.batch.events"].name
+  resource_group_name = azurerm_resource_group.env_rg.name
+}
+
+resource "azurerm_eventhub_consumer_group" "analytics_processing_v1" {
+  name                = "analytics-processing-v1"
   namespace_name      = azurerm_eventhub_namespace.kafka.name
   eventhub_name       = azurerm_eventhub.topics["ewaste.batch.events"].name
   resource_group_name = azurerm_resource_group.env_rg.name
@@ -336,7 +347,7 @@ resource "azurerm_eventhub_consumer_group" "analytics_worker_claim" {
 
 # Shared authorization rule for application workloads (SASL/PLAIN connection string)
 resource "azurerm_eventhub_namespace_authorization_rule" "app_auth" {
-  name                = "auth-ewaste-workload"
+  name                = "auth-ewastescalable-workload"
   namespace_name      = azurerm_eventhub_namespace.kafka.name
   resource_group_name = azurerm_resource_group.env_rg.name
 
@@ -359,7 +370,7 @@ resource "azurerm_role_assignment" "eventhub_receiver" {
 }
 
 # ============================================================================
-# 6. COMPUTE: AZURE CONTAINER APPS
+# 6. COMPUTE: AZURE CONTAINER APPS (DECOUPLED MICROSERVICES ARCHITECTURE)
 # ============================================================================
 
 resource "azurerm_container_app_environment" "aca_env" {
@@ -377,7 +388,221 @@ resource "azurerm_container_app_environment" "aca_env" {
   }
 }
 
-# 6.1 Backend API / workflow Container App
+# 6.1 Identity & Access Service (Go 1.23, Port 8080, Internal Ingress)
+resource "azurerm_container_app" "auth" {
+  name                         = "aca-${local.name_prefix}-auth"
+  workload_profile_name        = "Consumption"
+  container_app_environment_id = azurerm_container_app_environment.aca_env.id
+  resource_group_name          = azurerm_resource_group.env_rg.name
+  revision_mode                = "Single"
+  tags                         = local.common_tags
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
+  }
+
+  registry {
+    server   = data.azurerm_container_registry.shared_acr.login_server
+    identity = azurerm_user_assigned_identity.aca_identity.id
+  }
+
+  secret {
+    name  = "db-password"
+    value = var.db_admin_password
+  }
+
+  secret {
+    name  = "redis-password"
+    value = azurerm_redis_cache.redis.primary_access_key
+  }
+
+  secret {
+    name  = "access-secret"
+    value = var.auth_access_secret
+  }
+
+  secret {
+    name  = "refresh-secret"
+    value = var.auth_refresh_secret
+  }
+
+  secret {
+    name  = "refresh-hash-secret"
+    value = var.auth_refresh_hash_secret
+  }
+
+  secret {
+    name  = "analytics-service-token"
+    value = var.analytics_service_token
+  }
+
+  template {
+    min_replicas = 1
+    max_replicas = 2
+
+    container {
+      name   = "identity-access-api"
+      image  = var.auth_image_digest
+      cpu    = 0.5
+      memory = "1Gi"
+
+      env {
+        name  = "EWASTE_MODE"
+        value = var.environment == "dev" ? "development" : "production"
+      }
+
+      env {
+        name  = "EWASTE_SERVER_PORT"
+        value = ":8080"
+      }
+
+      env {
+        name  = "EWASTE_SERVER_ALLOWED_ORIGINS"
+        value = "https://aca-${local.name_prefix}-ui.${azurerm_container_app_environment.aca_env.default_domain}"
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_HOST"
+        value = azurerm_mysql_flexible_server.db.fqdn
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_PORT"
+        value = "3306"
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_NAME"
+        value = azurerm_mysql_flexible_database.ewastedb.name
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_USER"
+        value = var.db_admin_username
+      }
+
+      env {
+        name        = "MYSQL_PASSWORD"
+        secret_name = "db-password"
+      }
+
+      env {
+        name        = "EWASTE_DATABASE_PASSWORD"
+        secret_name = "db-password"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_ADDRESS"
+        value = "${azurerm_redis_cache.redis.hostname}:6380"
+      }
+
+      env {
+        name        = "REDIS_PASSWORD"
+        secret_name = "redis-password"
+      }
+
+      env {
+        name        = "EWASTE_REDIS_PASSWORD"
+        secret_name = "redis-password"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_DB"
+        value = "0"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_TLS_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_ISSUER"
+        value = "ewaste-identity-access"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_ACCESS_SECRET"
+        secret_name = "access-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_REFRESH_SECRET"
+        secret_name = "refresh-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_REFRESH_HASH_SECRET"
+        secret_name = "refresh-hash-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN"
+        secret_name = "analytics-service-token"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_ACCESS_TTL"
+        value = "15m"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_REFRESH_TTL"
+        value = "24h"
+      }
+
+      env {
+        name  = "EWASTE_RATE_LIMIT_REQUESTS"
+        value = "30"
+      }
+
+      env {
+        name  = "EWASTE_RATE_LIMIT_WINDOW"
+        value = "1m"
+      }
+
+      env {
+        name  = "EWASTE_LOGGING_LEVEL"
+        value = "info"
+      }
+    }
+
+    http_scale_rule {
+      name                = "http-concurrency-scaler"
+      concurrent_requests = "30"
+    }
+  }
+
+  ingress {
+    external_enabled = false
+    target_port      = 8080
+    transport        = "auto"
+
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+      template[0].container[0].memory,
+      workload_profile_name
+    ]
+  }
+
+  depends_on = [
+    azurerm_role_assignment.acr_pull,
+    azurerm_private_endpoint.acr,
+    azurerm_mysql_flexible_server.db,
+    azurerm_redis_cache.redis
+  ]
+}
+
+# 6.2 Batch Workflow Service / Authoritative Facade (Go 1.23, Port 8080, Internal Ingress)
+# Retains address azurerm_container_app.api for contract & test compatibility.
 resource "azurerm_container_app" "api" {
   name                         = "aca-${local.name_prefix}-api"
   workload_profile_name        = "Consumption"
@@ -396,7 +621,6 @@ resource "azurerm_container_app" "api" {
     identity = azurerm_user_assigned_identity.aca_identity.id
   }
 
-  # Native ACA secrets (encrypted at rest by Azure)
   secret {
     name  = "db-password"
     value = var.db_admin_password
@@ -427,7 +651,6 @@ resource "azurerm_container_app" "api" {
     value = azurerm_eventhub_namespace_authorization_rule.app_auth.primary_connection_string
   }
 
-  # Shared with CD; IaC must retain the matcher workload identity on reapply.
   secret {
     name  = "matching-signing-key"
     value = var.matcher_signing_secret
@@ -439,12 +662,12 @@ resource "azurerm_container_app" "api" {
   }
 
   template {
-    min_replicas = 1
-    max_replicas = 2
+    min_replicas = var.batch_min_replicas
+    max_replicas = var.batch_max_replicas
 
     container {
       name   = "workflow-api"
-      image  = var.image_digest
+      image  = var.batch_image_digest != "mcr.microsoft.com/azuredocs/aci-helloworld:latest" ? var.batch_image_digest : var.image_digest
       cpu    = 0.5
       memory = "1Gi"
 
@@ -727,10 +950,15 @@ resource "azurerm_container_app" "api" {
         value = azurerm_storage_account.evidence.primary_blob_endpoint
       }
     }
+
+    http_scale_rule {
+      name                = "http-concurrency-scaler"
+      concurrent_requests = "30"
+    }
   }
 
   ingress {
-    external_enabled = true
+    external_enabled = false
     target_port      = 8080
     transport        = "auto"
 
@@ -761,7 +989,505 @@ resource "azurerm_container_app" "api" {
   ]
 }
 
-# 6.2 Frontend UI (Next.js) Container App
+# 6.3 Claim Logistics Service (Go 1.23, Port 8080, Internal Ingress)
+resource "azurerm_container_app" "claim" {
+  name                         = "aca-${local.name_prefix}-claim"
+  workload_profile_name        = "Consumption"
+  container_app_environment_id = azurerm_container_app_environment.aca_env.id
+  resource_group_name          = azurerm_resource_group.env_rg.name
+  revision_mode                = "Single"
+  tags                         = local.common_tags
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
+  }
+
+  registry {
+    server   = data.azurerm_container_registry.shared_acr.login_server
+    identity = azurerm_user_assigned_identity.aca_identity.id
+  }
+
+  secret {
+    name  = "db-password"
+    value = var.db_admin_password
+  }
+
+  secret {
+    name  = "redis-password"
+    value = azurerm_redis_cache.redis.primary_access_key
+  }
+
+  secret {
+    name  = "access-secret"
+    value = var.auth_access_secret
+  }
+
+  secret {
+    name  = "refresh-secret"
+    value = var.auth_refresh_secret
+  }
+
+  secret {
+    name  = "refresh-hash-secret"
+    value = var.auth_refresh_hash_secret
+  }
+
+  secret {
+    name  = "kafka-conn"
+    value = azurerm_eventhub_namespace_authorization_rule.app_auth.primary_connection_string
+  }
+
+  template {
+    min_replicas = 1
+    max_replicas = 3
+
+    container {
+      name   = "claim-logistics-api"
+      image  = var.claim_image_digest
+      cpu    = 0.5
+      memory = "1Gi"
+
+      env {
+        name  = "EWASTE_MODE"
+        value = var.environment == "dev" ? "development" : "production"
+      }
+
+      env {
+        name  = "EWASTE_SERVER_PORT"
+        value = ":8080"
+      }
+
+      env {
+        name  = "EWASTE_SERVER_ALLOWED_ORIGINS"
+        value = "https://aca-${local.name_prefix}-ui.${azurerm_container_app_environment.aca_env.default_domain}"
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_HOST"
+        value = azurerm_mysql_flexible_server.db.fqdn
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_PORT"
+        value = "3306"
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_NAME"
+        value = azurerm_mysql_flexible_database.ewastedb.name
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_USER"
+        value = var.db_admin_username
+      }
+
+      env {
+        name        = "MYSQL_PASSWORD"
+        secret_name = "db-password"
+      }
+
+      env {
+        name        = "EWASTE_DATABASE_PASSWORD"
+        secret_name = "db-password"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_ADDRESS"
+        value = "${azurerm_redis_cache.redis.hostname}:6380"
+      }
+
+      env {
+        name        = "REDIS_PASSWORD"
+        secret_name = "redis-password"
+      }
+
+      env {
+        name        = "EWASTE_REDIS_PASSWORD"
+        secret_name = "redis-password"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_DB"
+        value = "0"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_TLS_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_ISSUER"
+        value = "ewaste-claim-logistics"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_ACCESS_SECRET"
+        secret_name = "access-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_REFRESH_SECRET"
+        secret_name = "refresh-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_REFRESH_HASH_SECRET"
+        secret_name = "refresh-hash-secret"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_ACCESS_TTL"
+        value = "15m"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_REFRESH_TTL"
+        value = "24h"
+      }
+
+      env {
+        name  = "EWASTE_KAFKA_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EWASTE_KAFKA_BROKERS"
+        value = "${azurerm_eventhub_namespace.kafka.name}.servicebus.windows.net:9093"
+      }
+
+      env {
+        name  = "EWASTE_KAFKA_TLS_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EWASTE_KAFKA_SASL_MECHANISM"
+        value = "PLAIN"
+      }
+
+      env {
+        name  = "EWASTE_KAFKA_SASL_USERNAME"
+        value = "$ConnectionString"
+      }
+
+      env {
+        name        = "KAFKA_CONNECTION_STRING"
+        secret_name = "kafka-conn"
+      }
+
+      env {
+        name  = "EWASTE_LOGGING_LEVEL"
+        value = "info"
+      }
+    }
+
+    http_scale_rule {
+      name                = "http-concurrency-scaler"
+      concurrent_requests = "30"
+    }
+  }
+
+  ingress {
+    external_enabled = false
+    target_port      = 8080
+    transport        = "auto"
+
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+      template[0].container[0].memory,
+      workload_profile_name
+    ]
+  }
+
+  depends_on = [
+    azurerm_role_assignment.acr_pull,
+    azurerm_private_endpoint.acr,
+    azurerm_mysql_flexible_server.db,
+    azurerm_redis_cache.redis,
+    azurerm_role_assignment.eventhub_sender,
+    azurerm_eventhub_namespace_authorization_rule.app_auth
+  ]
+}
+
+# 6.4 Custody & Verification Service (Go 1.23, Port 8080, Internal Ingress)
+resource "azurerm_container_app" "custody" {
+  name                         = "aca-${local.name_prefix}-custody"
+  workload_profile_name        = "Consumption"
+  container_app_environment_id = azurerm_container_app_environment.aca_env.id
+  resource_group_name          = azurerm_resource_group.env_rg.name
+  revision_mode                = "Single"
+  tags                         = local.common_tags
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
+  }
+
+  registry {
+    server   = data.azurerm_container_registry.shared_acr.login_server
+    identity = azurerm_user_assigned_identity.aca_identity.id
+  }
+
+  secret {
+    name  = "db-password"
+    value = var.db_admin_password
+  }
+
+  secret {
+    name  = "redis-password"
+    value = azurerm_redis_cache.redis.primary_access_key
+  }
+
+  secret {
+    name  = "access-secret"
+    value = var.auth_access_secret
+  }
+
+  secret {
+    name  = "refresh-secret"
+    value = var.auth_refresh_secret
+  }
+
+  secret {
+    name  = "refresh-hash-secret"
+    value = var.auth_refresh_hash_secret
+  }
+
+  secret {
+    name  = "kafka-conn"
+    value = azurerm_eventhub_namespace_authorization_rule.app_auth.primary_connection_string
+  }
+
+  template {
+    min_replicas = 1
+    max_replicas = 3
+
+    container {
+      name   = "custody-verification-api"
+      image  = var.custody_image_digest
+      cpu    = 0.5
+      memory = "1Gi"
+
+      env {
+        name  = "EWASTE_MODE"
+        value = var.environment == "dev" ? "development" : "production"
+      }
+
+      env {
+        name  = "EWASTE_SERVER_PORT"
+        value = ":8080"
+      }
+
+      env {
+        name  = "EWASTE_SERVER_ALLOWED_ORIGINS"
+        value = "https://aca-${local.name_prefix}-ui.${azurerm_container_app_environment.aca_env.default_domain}"
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_HOST"
+        value = azurerm_mysql_flexible_server.db.fqdn
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_PORT"
+        value = "3306"
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_NAME"
+        value = azurerm_mysql_flexible_database.ewastedb.name
+      }
+
+      env {
+        name  = "EWASTE_DATABASE_USER"
+        value = var.db_admin_username
+      }
+
+      env {
+        name        = "MYSQL_PASSWORD"
+        secret_name = "db-password"
+      }
+
+      env {
+        name        = "EWASTE_DATABASE_PASSWORD"
+        secret_name = "db-password"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_ADDRESS"
+        value = "${azurerm_redis_cache.redis.hostname}:6380"
+      }
+
+      env {
+        name        = "REDIS_PASSWORD"
+        secret_name = "redis-password"
+      }
+
+      env {
+        name        = "EWASTE_REDIS_PASSWORD"
+        secret_name = "redis-password"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_DB"
+        value = "0"
+      }
+
+      env {
+        name  = "EWASTE_REDIS_TLS_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_ISSUER"
+        value = "ewaste-custody-verification"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_ACCESS_SECRET"
+        secret_name = "access-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_REFRESH_SECRET"
+        secret_name = "refresh-secret"
+      }
+
+      env {
+        name        = "EWASTE_AUTH_REFRESH_HASH_SECRET"
+        secret_name = "refresh-hash-secret"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_ACCESS_TTL"
+        value = "15m"
+      }
+
+      env {
+        name  = "EWASTE_AUTH_REFRESH_TTL"
+        value = "24h"
+      }
+
+      env {
+        name  = "EWASTE_KAFKA_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EWASTE_KAFKA_BROKERS"
+        value = "${azurerm_eventhub_namespace.kafka.name}.servicebus.windows.net:9093"
+      }
+
+      env {
+        name  = "EWASTE_KAFKA_TLS_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EWASTE_KAFKA_SASL_MECHANISM"
+        value = "PLAIN"
+      }
+
+      env {
+        name  = "EWASTE_KAFKA_SASL_USERNAME"
+        value = "$ConnectionString"
+      }
+
+      env {
+        name        = "KAFKA_CONNECTION_STRING"
+        secret_name = "kafka-conn"
+      }
+
+      env {
+        name  = "STORAGE_ADAPTER_TYPE"
+        value = "azure_blob"
+      }
+
+      env {
+        name  = "AZURE_STORAGE_ACCOUNT"
+        value = azurerm_storage_account.evidence.name
+      }
+
+      env {
+        name  = "AZURE_STORAGE_CONTAINER"
+        value = azapi_resource.evidence_private.name
+      }
+
+      env {
+        name  = "AZURE_STORAGE_ENDPOINT"
+        value = azurerm_storage_account.evidence.primary_blob_endpoint
+      }
+
+      env {
+        name  = "AZURE_USE_MANAGED_ID"
+        value = "true"
+      }
+
+      env {
+        name  = "AZURE_CLIENT_ID"
+        value = azurerm_user_assigned_identity.aca_identity.client_id
+      }
+
+      env {
+        name  = "MAX_UPLOAD_SIZE_BYTES"
+        value = "5242880"
+      }
+
+      env {
+        name  = "EWASTE_LOGGING_LEVEL"
+        value = "info"
+      }
+    }
+
+    http_scale_rule {
+      name                = "http-concurrency-scaler"
+      concurrent_requests = "30"
+    }
+  }
+
+  ingress {
+    external_enabled = false
+    target_port      = 8080
+    transport        = "auto"
+
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+      template[0].container[0].memory,
+      workload_profile_name
+    ]
+  }
+
+  depends_on = [
+    azurerm_role_assignment.acr_pull,
+    azurerm_private_endpoint.acr,
+    azurerm_mysql_flexible_server.db,
+    azurerm_redis_cache.redis,
+    azurerm_role_assignment.eventhub_sender,
+    azurerm_eventhub_namespace_authorization_rule.app_auth,
+    azurerm_role_assignment.storage_blob_data_contributor,
+    azurerm_private_endpoint.storage_pe,
+    azapi_resource.evidence_private
+  ]
+}
+
+# 6.5 Frontend UI & Single Public Entry Reverse Proxy (Next.js PWA, Port 3000, Public Ingress)
 resource "azurerm_container_app" "ui" {
   name                         = "aca-${local.name_prefix}-ui"
   workload_profile_name        = "Consumption"
@@ -811,6 +1537,46 @@ resource "azurerm_container_app" "ui" {
       }
 
       env {
+        name  = "AUTH_SERVICE_URL"
+        value = "https://${azurerm_container_app.auth.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "BATCH_SERVICE_URL"
+        value = "https://${azurerm_container_app.api.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "CLAIM_SERVICE_URL"
+        value = "https://${azurerm_container_app.claim.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "CUSTODY_SERVICE_URL"
+        value = "https://${azurerm_container_app.custody.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "IDENTITY_ACCESS_URL"
+        value = "https://${azurerm_container_app.auth.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "BATCH_WORKFLOW_URL"
+        value = "https://${azurerm_container_app.api.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "CLAIM_LOGISTICS_URL"
+        value = "https://${azurerm_container_app.claim.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "CUSTODY_VERIFICATION_URL"
+        value = "https://${azurerm_container_app.custody.ingress[0].fqdn}"
+      }
+
+      env {
         name  = "NEXT_PUBLIC_USE_MOCK_AUTH"
         value = "false"
       }
@@ -824,6 +1590,11 @@ resource "azurerm_container_app" "ui" {
         name  = "PORT"
         value = "3000"
       }
+    }
+
+    http_scale_rule {
+      name                = "http-concurrency-scaler"
+      concurrent_requests = "50"
     }
   }
 
@@ -849,13 +1620,16 @@ resource "azurerm_container_app" "ui" {
   depends_on = [
     azurerm_role_assignment.acr_pull,
     azurerm_private_endpoint.acr,
-    azurerm_container_app.api
+    azurerm_container_app.api,
+    azurerm_container_app.auth,
+    azurerm_container_app.claim,
+    azurerm_container_app.custody
   ]
 }
 
-# 6.3 Analytics & Matching Worker Container App
-resource "azurerm_container_app" "analytics" {
-  name                         = "aca-${local.name_prefix}-analytics"
+# 6.6 Matching Worker Service (Python 3.12, Headless Consumer, Event Hubs Kafka Scaler)
+resource "azurerm_container_app" "matching_worker" {
+  name                         = "aca-${local.name_prefix}-matcher"
   workload_profile_name        = "Consumption"
   container_app_environment_id = azurerm_container_app_environment.aca_env.id
   resource_group_name          = azurerm_resource_group.env_rg.name
@@ -873,11 +1647,208 @@ resource "azurerm_container_app" "analytics" {
   }
 
   secret {
+    name  = "kafka-username"
+    value = "$ConnectionString"
+  }
+
+  secret {
     name  = "kafka-conn"
     value = azurerm_eventhub_namespace_authorization_rule.app_auth.primary_connection_string
   }
 
-  # Shared with CD; IaC must retain the matcher workload identity on reapply.
+  secret {
+    name  = "matching-signing-key"
+    value = var.matcher_signing_secret
+  }
+
+  template {
+    min_replicas = 1
+    max_replicas = 3
+
+    container {
+      name   = "matching-worker"
+      image  = var.matching_image_digest
+      cpu    = 0.5
+      memory = "1Gi"
+
+      env {
+        name  = "KAFKA_BOOTSTRAP_SERVERS"
+        value = "${azurerm_eventhub_namespace.kafka.name}.servicebus.windows.net:9093"
+      }
+
+      env {
+        name        = "KAFKA_CONNECTION_STRING"
+        secret_name = "kafka-conn"
+      }
+
+      env {
+        name        = "MATCHER_SIGNING_SECRET"
+        secret_name = "matching-signing-key"
+      }
+
+      env {
+        name  = "MATCHER_TOPIC"
+        value = "ewaste.batch.events"
+      }
+
+      env {
+        name  = "MATCHER_DLQ_TOPIC"
+        value = "ewaste.batch.events.matching.dlq.v1"
+      }
+
+      env {
+        name  = "MATCHER_GROUP_ID"
+        value = "matching-worker"
+      }
+
+      env {
+        name  = "MATCHER_OFFSET_RESET"
+        value = "earliest"
+      }
+
+      env {
+        name  = "MATCHER_FACADE_URL"
+        value = "https://${azurerm_container_app.api.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "MATCHER_LOCAL_TEST"
+        value = "0"
+      }
+
+      env {
+        name  = "MATCHER_TOKEN_ISSUER"
+        value = "ewaste-matching-${var.environment}"
+      }
+
+      env {
+        name  = "MATCHER_TOKEN_AUDIENCE"
+        value = "ewaste-matching-api-${var.environment}"
+      }
+
+      env {
+        name  = "MATCHER_MAX_POLL_MS"
+        value = "300000"
+      }
+
+      env {
+        name  = "MATCHER_SESSION_TIMEOUT_MS"
+        value = "30000"
+      }
+
+      env {
+        name  = "MATCHER_WORKERS"
+        value = "1"
+      }
+
+      env {
+        name  = "MATCHER_HTTP_TIMEOUT_SECONDS"
+        value = "30"
+      }
+
+      env {
+        name  = "MATCHER_MAX_RESPONSE_BYTES"
+        value = "16777216"
+      }
+
+      env {
+        name  = "MATCHER_MAX_RECORD_BYTES"
+        value = "1000000"
+      }
+
+      env {
+        name  = "MATCHER_DELIVERY_TIMEOUT_SECONDS"
+        value = "120"
+      }
+
+      env {
+        name  = "MATCHER_RETRY_BASE_SECONDS"
+        value = "1"
+      }
+
+      env {
+        name  = "MATCHER_RETRY_MAX_SECONDS"
+        value = "30"
+      }
+
+      env {
+        name  = "MATCHER_MAX_REFRESHES"
+        value = "5"
+      }
+    }
+
+    custom_scale_rule {
+      name             = "kafka-consumer-lag-scaler"
+      custom_rule_type = "kafka"
+
+      metadata = {
+        bootstrapServers = "${azurerm_eventhub_namespace.kafka.name}.servicebus.windows.net:9093"
+        topic            = "ewaste.batch.events"
+        consumerGroup    = "matching-worker"
+        lagThreshold     = "50"
+        tls              = "enable"
+        sasl             = "plaintext"
+      }
+
+      authentication {
+        trigger_parameter = "username"
+        secret_name       = "kafka-username"
+      }
+
+      authentication {
+        trigger_parameter = "password"
+        secret_name       = "kafka-conn"
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+      template[0].container[0].memory,
+      workload_profile_name
+    ]
+  }
+
+  depends_on = [
+    azurerm_role_assignment.acr_pull,
+    azurerm_role_assignment.eventhub_sender,
+    azurerm_role_assignment.eventhub_receiver,
+    azurerm_eventhub_namespace_authorization_rule.app_auth,
+    azurerm_container_app.api
+  ]
+}
+
+# 6.7 Analytics Worker Service (Python 3.12, Event Hubs Kafka Scaler)
+# Retains address azurerm_container_app.analytics for test & output contract compatibility.
+resource "azurerm_container_app" "analytics" {
+  name                         = "aca-${local.name_prefix}-analytic"
+  workload_profile_name        = "Consumption"
+  container_app_environment_id = azurerm_container_app_environment.aca_env.id
+  resource_group_name          = azurerm_resource_group.env_rg.name
+  revision_mode                = "Single"
+  tags                         = local.common_tags
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
+  }
+
+  registry {
+    server   = data.azurerm_container_registry.shared_acr.login_server
+    identity = azurerm_user_assigned_identity.aca_identity.id
+  }
+
+  secret {
+    name  = "kafka-username"
+    value = "$ConnectionString"
+  }
+
+  secret {
+    name  = "kafka-conn"
+    value = azurerm_eventhub_namespace_authorization_rule.app_auth.primary_connection_string
+  }
+
   secret {
     name  = "matching-signing-key"
     value = var.matcher_signing_secret
@@ -890,7 +1861,7 @@ resource "azurerm_container_app" "analytics" {
 
   template {
     min_replicas = 1
-    max_replicas = 2
+    max_replicas = 3
 
     container {
       name   = "workflow-analytics"
@@ -908,7 +1879,6 @@ resource "azurerm_container_app" "analytics" {
         secret_name = "kafka-conn"
       }
 
-      # Keep the worker startup contract aligned with scripts/deploy-matcher.sh.
       env {
         name        = "MATCHER_SIGNING_SECRET"
         secret_name = "matching-signing-key"
@@ -1029,12 +1999,34 @@ resource "azurerm_container_app" "analytics" {
         value = "8000"
       }
     }
+
+    custom_scale_rule {
+      name             = "kafka-consumer-lag-scaler"
+      custom_rule_type = "kafka"
+
+      metadata = {
+        bootstrapServers = "${azurerm_eventhub_namespace.kafka.name}.servicebus.windows.net:9093"
+        topic            = "ewaste.batch.events"
+        consumerGroup    = "analytics-worker"
+        lagThreshold     = "50"
+        tls              = "enable"
+        sasl             = "plaintext"
+      }
+
+      authentication {
+        trigger_parameter = "username"
+        secret_name       = "kafka-username"
+      }
+
+      authentication {
+        trigger_parameter = "password"
+        secret_name       = "kafka-conn"
+      }
+    }
   }
 
   ingress {
-    # Dev exposes /readyz for the CD smoke check. Stg/prod retain internal
-    # ingress; deployment checks the exact revision's platform health there.
-    external_enabled = var.environment == "dev" ? true : false
+    external_enabled = false
     target_port      = 8000
     transport        = "auto"
 
@@ -1056,6 +2048,7 @@ resource "azurerm_container_app" "analytics" {
     azurerm_role_assignment.acr_pull,
     azurerm_role_assignment.eventhub_sender,
     azurerm_role_assignment.eventhub_receiver,
-    azurerm_eventhub_namespace_authorization_rule.app_auth
+    azurerm_eventhub_namespace_authorization_rule.app_auth,
+    azurerm_container_app.api
   ]
 }

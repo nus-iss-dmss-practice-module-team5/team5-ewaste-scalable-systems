@@ -7,8 +7,8 @@ TARGET_ENV="${1:-dev}"
 PHASE="${2:-public}"
 [[ "$TARGET_ENV" =~ ^(dev|stg|prod)$ ]] || { echo 'Invalid environment.' >&2; exit 1; }
 [[ "$PHASE" =~ ^(public|private)$ ]] || { echo 'Expected public or private phase.' >&2; exit 1; }
-RG="rg-ewaste-${TARGET_ENV}"
-ACCOUNT="stgewaste${TARGET_ENV}"
+RG="rg-ewastescalable-${TARGET_ENV}"
+ACCOUNT="stgewastescalable${TARGET_ENV}"
 CONTAINER="evidence-private"
 URL="https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}"
 TMP=$(mktemp -d)
@@ -40,21 +40,21 @@ if [[ "$PHASE" == public ]]; then
     | jq -e '(.properties.publicAccess // "None") == "None"' >/dev/null
   echo 'PASS: private account/container, shared keys disabled, versioning and seven-day soft delete.'
 
-  az network private-endpoint show --name "pe-stgewaste-${TARGET_ENV}" --resource-group "$RG" \
+  az network private-endpoint show --name "pe-stgewastescalable-${TARGET_ENV}" --resource-group "$RG" \
     | jq -e --arg id "$SA_ID" '.privateLinkServiceConnections | any(.privateLinkServiceConnectionState.status == "Approved" and .privateLinkServiceId == $id and (.groupIds | index("blob") != null))' >/dev/null
-  VNET_ID=$(az network vnet show --name "vnet-ewaste-${TARGET_ENV}" --resource-group "$RG" --query id -o tsv)
+  VNET_ID=$(az network vnet show --name "vnet-ewastescalable-${TARGET_ENV}" --resource-group "$RG" --query id -o tsv)
   [[ -n "$VNET_ID" ]] || fail 'VNet ID is missing.'
   az network private-dns link vnet show --name vnetlink-blob --zone-name privatelink.blob.core.windows.net --resource-group "$RG" \
     | jq -e --arg id "$VNET_ID" '.virtualNetwork.id == $id and .virtualNetworkLinkState == "Completed"' >/dev/null
   echo 'PASS: approved Blob private endpoint and DNS link to the expected VNet.'
 
-  IDENTITY=$(az identity show --name "id-ewaste-${TARGET_ENV}" --resource-group "$RG" -o json)
+  IDENTITY=$(az identity show --name "id-ewastescalable-${TARGET_ENV}" --resource-group "$RG" -o json)
   CLIENT_ID=$(jq -er '.clientId' <<< "$IDENTITY")
   PRINCIPAL_ID=$(jq -er '.principalId' <<< "$IDENTITY")
   IDENTITY_ID=$(jq -er '.id' <<< "$IDENTITY")
   az role assignment list --scope "$SA_ID" --include-inherited \
     | jq -e --arg principal "$PRINCIPAL_ID" 'any(.principalId == $principal and .roleDefinitionName == "Storage Blob Data Contributor")' >/dev/null
-  az containerapp show --name "aca-ewaste-${TARGET_ENV}-api" --resource-group "$RG" \
+  az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-api" --resource-group "$RG" \
     | jq -e --arg id "$IDENTITY_ID" --arg client "$CLIENT_ID" --arg account "$ACCOUNT" '
       (.identity.userAssignedIdentities | has($id)) and
       ([.properties.template.containers[] | select(.name == "workflow-api") | .env[]] | map({key:.name,value:.value}) | from_entries |
@@ -71,7 +71,7 @@ if [[ "$PHASE" == public ]]; then
   [[ "$STATUS" == 403 ]] || fail "Public request returned HTTP $STATUS; expected 403."
   echo 'PASS: authenticated request from the hosted runner denied (HTTP 403); public access remains disabled.'
 else
-  CLIENT_ID=$(az identity show --name "id-runner-ewaste-${TARGET_ENV}" --resource-group "$RG" --query clientId -o tsv)
+  CLIENT_ID=$(az identity show --name "id-runner-ewastescalable-${TARGET_ENV}" --resource-group "$RG" --query clientId -o tsv)
   [[ -n "$CLIENT_ID" && "$CLIENT_ID" != null ]] || fail 'Existing VNet runner identity is missing.'
   # Keep this job login separate from the persistent self-hosted runner CLI cache.
   export AZURE_CONFIG_DIR="$TMP/azure"

@@ -1,40 +1,5 @@
 import axios from "axios";
 
-export type AssignmentCurrentState = {
-  assignmentId: string;
-  assignmentStatus: string;
-  assignmentVersion: number;
-  batchId: string;
-  batchStatus: string;
-  batchVersion: number;
-  currentAssignmentId?: string;
-};
-
-function readCurrentState(value: unknown): AssignmentCurrentState | undefined {
-  if (
-    !isRecord(value) ||
-    typeof value.assignment_id !== "string" ||
-    typeof value.assignment_status !== "string" ||
-    typeof value.assignment_version !== "number" ||
-    typeof value.batch_id !== "string" ||
-    typeof value.batch_status !== "string" ||
-    typeof value.batch_version !== "number"
-  )
-    return undefined;
-  return {
-    assignmentId: value.assignment_id,
-    assignmentStatus: value.assignment_status,
-    assignmentVersion: value.assignment_version,
-    batchId: value.batch_id,
-    batchStatus: value.batch_status,
-    batchVersion: value.batch_version,
-    currentAssignmentId:
-      typeof value.current_assignment_id === "string"
-        ? value.current_assignment_id
-        : undefined,
-  };
-}
-
 export type WorkflowErrorKind =
   | "validation"
   | "forbidden"
@@ -45,6 +10,22 @@ export type WorkflowErrorKind =
   | "unavailable"
   | "session"
   | "error";
+
+/**
+ * Authoritative server state sent with a 409 STALE_VERSION on an assignment
+ * command (`current_state` in the error body), read in the same transaction
+ * that refused the write.
+ */
+export type AssignmentCurrentState = {
+  assignmentId: string;
+  assignmentStatus: string;
+  assignmentVersion: number;
+  batchId: string;
+  batchStatus: string;
+  batchVersion: number;
+  /** The batch's live assignment, when it is no longer this one. */
+  currentAssignmentId?: string;
+};
 
 export class WorkflowError extends Error {
   readonly kind: WorkflowErrorKind;
@@ -101,10 +82,49 @@ function kindForStatus(status: number, code: string): WorkflowErrorKind {
   return "error";
 }
 
+/** `current_state` from an error body; undefined unless it is complete. */
+function readCurrentState(value: unknown): AssignmentCurrentState | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const {
+    assignment_id: assignmentId,
+    assignment_status: assignmentStatus,
+    assignment_version: assignmentVersion,
+    batch_id: batchId,
+    batch_status: batchStatus,
+    batch_version: batchVersion,
+    current_assignment_id: currentAssignmentId,
+  } = value;
+  if (
+    typeof assignmentId !== "string" ||
+    typeof assignmentStatus !== "string" ||
+    typeof assignmentVersion !== "number" ||
+    typeof batchId !== "string" ||
+    typeof batchStatus !== "string" ||
+    typeof batchVersion !== "number"
+  ) {
+    return undefined;
+  }
+  const state: AssignmentCurrentState = {
+    assignmentId,
+    assignmentStatus,
+    assignmentVersion,
+    batchId,
+    batchStatus,
+    batchVersion,
+  };
+  if (typeof currentAssignmentId === "string" && currentAssignmentId !== "") {
+    state.currentAssignmentId = currentAssignmentId;
+  }
+  return state;
+}
+
 function readErrorBody(data: unknown): {
   code: string;
   message: string;
   correlationId: string;
+  currentState?: AssignmentCurrentState;
 } {
   if (!isRecord(data)) {
     return {
@@ -120,7 +140,10 @@ function readErrorBody(data: unknown): {
     typeof data.correlation_id === "string"
       ? data.correlation_id
       : "corr-unknown";
-  return { code, message, correlationId };
+  const currentState = readCurrentState(data.current_state);
+  return currentState
+    ? { code, message, correlationId, currentState }
+    : { code, message, correlationId };
 }
 
 export function toWorkflowError(error: unknown): WorkflowError {
@@ -143,9 +166,7 @@ export function toWorkflowError(error: unknown): WorkflowError {
       body.code,
       body.correlationId,
       error.response.status,
-      body.code === "STALE_VERSION" && isRecord(error.response.data)
-        ? readCurrentState(error.response.data.current_state)
-        : undefined,
+      body.currentState,
     );
   }
   return new WorkflowError(

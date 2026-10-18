@@ -30,6 +30,13 @@ export type Session = {
   refreshExpiresAt: number;
 };
 
+/**
+ * Outcome of a session renewal: "rejected" means the user must sign in again
+ * (no session, or the refresh token was refused); "unreachable" means the
+ * sign-in service could not be reached and the session was kept.
+ */
+export type RenewResult = "renewed" | "rejected" | "unreachable";
+
 export function isAuthError(error: unknown): error is AuthErrorBody {
   return (
     typeof error === "object" &&

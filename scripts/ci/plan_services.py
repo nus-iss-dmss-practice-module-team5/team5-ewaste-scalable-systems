@@ -24,7 +24,7 @@ import re
 import sys
 from pathlib import Path
 
-APP_PREFIX = "aca-ewaste"
+APP_PREFIX = "aca-ewastescalable"
 REQUIRED_FIELDS = ("name", "stack", "image", "dockerfile", "context", "app", "paths")
 STACKS = ("go", "python", "node")
 DEPLOY_MODES = ("image", "matcher-script")
