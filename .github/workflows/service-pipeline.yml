@@ -229,6 +229,36 @@ jobs:
               ;;
           esac
 
+      # Next.js compiles rewrites during the image build. Runtime Container App
+      # environment variables cannot replace a localhost URL baked into it.
+      - name: Resolve UI Service URLs for Build
+        if: inputs.service == 'ui'
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          TARGET_ENV: ${{ inputs.environment }}
+          RG: ${{ inputs.resource_group }}
+        run: |
+          set -euo pipefail
+          SP_APP_ID=$(echo "$AZURE_CREDENTIALS" | jq -er .clientId)
+          SP_PASS=$(echo "$AZURE_CREDENTIALS" | jq -er .clientSecret)
+          SP_TENANT=$(echo "$AZURE_CREDENTIALS" | jq -er .tenantId)
+          SP_SUB=$(echo "$AZURE_CREDENTIALS" | jq -er .subscriptionId)
+          echo "::add-mask::$SP_PASS"
+          az login --service-principal -u "$SP_APP_ID" -p "$SP_PASS" --tenant "$SP_TENANT" --output none
+          az account set --subscription "$SP_SUB"
+
+          for mapping in IDENTITY_ACCESS_URL:auth BATCH_WORKFLOW_URL:api CLAIM_LOGISTICS_URL:claim CUSTODY_VERIFICATION_URL:custody; do
+            URL_VAR="${mapping%%:*}"
+            APP_NAME="aca-ewastescalable-${TARGET_ENV}-${mapping##*:}"
+            FQDN=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" \
+              --query 'properties.configuration.ingress.fqdn' --output tsv)
+            if [[ ! "$FQDN" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z0-9-]+$ ]]; then
+              echo "::error::No valid ingress FQDN for $APP_NAME; refusing to build UI with a localhost fallback."
+              exit 1
+            fi
+            echo "${URL_VAR}=https://${FQDN}" >> "$GITHUB_ENV"
+          done
+
       - name: Build Container Image
         id: build
         env:
@@ -248,6 +278,16 @@ jobs:
           if [ -n "$BUILD_ARGS" ]; then
             for arg in $BUILD_ARGS; do
               args+=(--build-arg "$arg")
+            done
+          fi
+          if [ "$SERVICE_NAME" = "ui" ]; then
+            for name in IDENTITY_ACCESS_URL BATCH_WORKFLOW_URL CLAIM_LOGISTICS_URL CUSTODY_VERIFICATION_URL; do
+              value="${!name:-}"
+              if [[ "$value" != https://?* ]]; then
+                echo "::error::Missing HTTPS service URL: $name"
+                exit 1
+              fi
+              args+=(--build-arg "${name}=${value}")
             done
           fi
 

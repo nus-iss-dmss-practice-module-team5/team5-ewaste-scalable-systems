@@ -545,25 +545,40 @@ jobs:
         env:
           UI_FQDN: ${{ needs.resolve-environment.outputs.ui_fqdn }}
           TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+          SMOKE_TEST_EMAIL: ${{ vars.SMOKE_TEST_EMAIL || 'donor1@ewaste.test' }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD || 'TestOnly#2026!' }}
         run: |
-          if [ -n "$UI_FQDN" ]; then
-            API_URL="https://${UI_FQDN}/api/v1/auth/login"
-            CORRELATION_ID="smoke-api-${TARGET_ENV}-$(date +%s)"
-            echo "Executing API authentication test through Single Public Entry: $API_URL"
+          set -euo pipefail
+          : "${UI_FQDN:?UI FQDN is required for the login smoke test}"
+          API_URL="https://${UI_FQDN}/api/v1/auth/login"
+          CORRELATION_ID="smoke-api-${TARGET_ENV}-$(date +%s)"
+          RESPONSE_FILE=$(mktemp)
+          trap 'rm -f "$RESPONSE_FILE"' EXIT
+          LOGIN_PAYLOAD=$(jq -nc --arg email "$SMOKE_TEST_EMAIL" --arg password "$SMOKE_TEST_PASSWORD" \
+            '{email: $email, password: $password}')
+          echo "Executing API authentication test through Single Public Entry: $API_URL"
 
-            RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$API_URL" \
-              -H "Content-Type: application/json" \
-              -H "X-Correlation-ID: $CORRELATION_ID" \
-              -d '{"email":"admin@ewaste.local","password":"Password123!"}' || true)
-
-            HTTP_BODY=$(echo "$RESPONSE" | sed '$d')
-            HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
-
-            echo "API HTTP Response Status: $HTTP_STATUS"
-            echo "API HTTP Response Body: $HTTP_BODY"
-          else
-            echo "API smoke test skipped: UI FQDN not yet assigned."
+          if ! HTTP_STATUS=$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output "$RESPONSE_FILE" --write-out '%{http_code}' -X POST "$API_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Correlation-ID: $CORRELATION_ID" \
+            --data "$LOGIN_PAYLOAD"); then
+            echo "::error::Login smoke test could not reach the UI gateway (correlation ID: $CORRELATION_ID)."
+            exit 1
           fi
+          echo "API HTTP Response Status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Login smoke test expected HTTP 200, received $HTTP_STATUS (correlation ID: $CORRELATION_ID)."
+            exit 1
+          fi
+          # Validate the auth response without exposing access or refresh tokens.
+          if ! jq -e '(.access_token | type == "string" and length > 0) and
+            (.refresh_token | type == "string" and length > 0) and
+            .token_type == "Bearer"' "$RESPONSE_FILE" > /dev/null 2>&1; then
+            echo "::error::Login returned HTTP 200 without a valid token response."
+            exit 1
+          fi
+          echo "Login smoke test passed."
 
       # ------------------------------------------------------------------------
       # 3.2 FRONTEND UI ACCESSIBILITY SMOKE TEST
@@ -572,13 +587,19 @@ jobs:
         env:
           UI_FQDN: ${{ needs.resolve-environment.outputs.ui_fqdn }}
         run: |
-          if [ -n "$UI_FQDN" ]; then
-            UI_URL="https://${UI_FQDN}/"
-            echo "Verifying Frontend UI accessibility at: $UI_URL"
-            UI_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$UI_URL" || true)
-            echo "UI HTTP Response Status: $UI_STATUS"
-          else
-            echo "UI smoke test skipped: FQDN not yet assigned."
+          set -euo pipefail
+          : "${UI_FQDN:?UI FQDN is required for the frontend smoke test}"
+          UI_URL="https://${UI_FQDN}/"
+          echo "Verifying Frontend UI accessibility at: $UI_URL"
+          if ! UI_STATUS=$(curl --silent --show-error --location --max-redirs 5 \
+            --connect-timeout 10 --max-time 30 --output /dev/null --write-out '%{http_code}' "$UI_URL"); then
+            echo "::error::Frontend smoke test could not reach the UI."
+            exit 1
+          fi
+          echo "UI HTTP Response Status: $UI_STATUS"
+          if [ "$UI_STATUS" != "200" ]; then
+            echo "::error::Frontend smoke test expected HTTP 200, received $UI_STATUS."
+            exit 1
           fi
 
       # ------------------------------------------------------------------------
