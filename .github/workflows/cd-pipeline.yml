@@ -230,6 +230,7 @@ jobs:
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           RAW_SERVICES: ${{ inputs.services }}
+          EVENT_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           SERVICES=$(echo "${RAW_SERVICES:-all}" | tr '[:upper:]' '[:lower:]' | xargs)
@@ -274,7 +275,7 @@ jobs:
             if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
               CHANGED=$(git diff --name-only origin/${GITHUB_BASE_REF:-main} HEAD 2>/dev/null || echo "")
             else
-              BEFORE_COMMIT="${{ github.event.before }}"
+              BEFORE_COMMIT="$EVENT_BEFORE"
               if [ -n "$BEFORE_COMMIT" ] && [ "$BEFORE_COMMIT" != "0000000000000000000000000000000000000000" ]; then
                 CHANGED=$(git diff --name-only "$BEFORE_COMMIT" HEAD 2>/dev/null || echo "")
               else
@@ -541,11 +542,13 @@ jobs:
       # 3.1 PUBLIC ENTRYPOINT & REVERSE PROXY SMOKE TEST (Decision AD4)
       # ------------------------------------------------------------------------
       - name: Execute Seeded-User Login API Smoke Test via Public UI Gateway
+        env:
+          UI_FQDN: ${{ needs.resolve-environment.outputs.ui_fqdn }}
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
         run: |
-          UI_FQDN="${{ needs.resolve-environment.outputs.ui_fqdn }}"
           if [ -n "$UI_FQDN" ]; then
             API_URL="https://${UI_FQDN}/api/v1/auth/login"
-            CORRELATION_ID="smoke-api-${{ needs.resolve-environment.outputs.environment }}-$(date +%s)"
+            CORRELATION_ID="smoke-api-${TARGET_ENV}-$(date +%s)"
             echo "Executing API authentication test through Single Public Entry: $API_URL"
 
             RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$API_URL" \
@@ -566,8 +569,9 @@ jobs:
       # 3.2 FRONTEND UI ACCESSIBILITY SMOKE TEST
       # ------------------------------------------------------------------------
       - name: Execute Frontend UI Endpoint Smoke Test
+        env:
+          UI_FQDN: ${{ needs.resolve-environment.outputs.ui_fqdn }}
         run: |
-          UI_FQDN="${{ needs.resolve-environment.outputs.ui_fqdn }}"
           if [ -n "$UI_FQDN" ]; then
             UI_URL="https://${UI_FQDN}/"
             echo "Verifying Frontend UI accessibility at: $UI_URL"
@@ -581,13 +585,18 @@ jobs:
       # 3.3 DEPLOYMENT SUMMARY & ARCHIVAL BANNER
       # ------------------------------------------------------------------------
       - name: Confirm Deployment & Archival State
+        env:
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+          DEPLOYMENT_DESC: ${{ needs.resolve-environment.outputs.deployment_desc }}
+          RESOURCE_GROUP: ${{ needs.resolve-environment.outputs.resource_group }}
+          UI_FQDN: ${{ needs.resolve-environment.outputs.ui_fqdn }}
         run: |
           echo "======================================================================"
           echo "  PER-SERVICE DEPLOYMENT & AUDIT SUITE COMPLETED SUCCESSFULLY"
-          echo "  - Environment Target: ${{ needs.resolve-environment.outputs.environment }}"
-          echo "  - Deployment Scope: ${{ needs.resolve-environment.outputs.deployment_desc }}"
-          echo "  - Resource Group: ${{ needs.resolve-environment.outputs.resource_group }}"
+          echo "  - Environment Target: $TARGET_ENV"
+          echo "  - Deployment Scope: $DEPLOYMENT_DESC"
+          echo "  - Resource Group: $RESOURCE_GROUP"
           echo "  - Per-Service Isolation: Decoupled Stages Tested, Built, Scanned & Deployed"
-          echo "  - Single Public Ingress Gateway Verified: https://${{ needs.resolve-environment.outputs.ui_fqdn }}"
+          echo "  - Single Public Ingress Gateway Verified: https://$UI_FQDN"
           echo "  - DAST Scan: OWASP ZAP Report Retained for Academic Review"
           echo "======================================================================"

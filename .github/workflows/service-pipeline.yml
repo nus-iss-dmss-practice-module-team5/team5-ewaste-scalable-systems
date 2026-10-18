@@ -77,13 +77,15 @@ jobs:
       - name: Run Go Vet and Tests
         if: inputs.service == 'auth' || inputs.service == 'api' || inputs.service == 'claim' || inputs.service == 'custody'
         working-directory: src/backend
+        env:
+          SERVICE_NAME: ${{ inputs.service }}
         run: |
           set -euo pipefail
           echo "Running shared backend Go test suite..."
           go vet ./...
           go test -race ./...
 
-          case "${{ inputs.service }}" in
+          case "$SERVICE_NAME" in
             auth) CMD_DIR="identity-access" ;;
             api) CMD_DIR="batch-workflow" ;;
             claim) CMD_DIR="claim-logistics" ;;
@@ -161,13 +163,17 @@ jobs:
       # ------------------------------------------------------------------------
       - name: Resolve Build Parameters
         id: params
+        env:
+          COMMIT_SHA: ${{ inputs.commit }}
+          TARGET_ENV: ${{ inputs.environment }}
+          SERVICE_NAME: ${{ inputs.service }}
         run: |
           set -euo pipefail
-          SHORT_SHA=$(echo "${{ inputs.commit }}" | cut -c1-7)
-          IMAGE_TAG="${{ inputs.environment }}-${SHORT_SHA}"
+          SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
+          IMAGE_TAG="${TARGET_ENV}-${SHORT_SHA}"
           echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
 
-          case "${{ inputs.service }}" in
+          case "$SERVICE_NAME" in
             ui)
               echo "IMAGE_NAME=workflow-ui" >> "$GITHUB_ENV"
               echo "DOCKERFILE=src/frontend/Dockerfile" >> "$GITHUB_ENV"
@@ -218,20 +224,23 @@ jobs:
               echo "BUILD_TARGET=" >> "$GITHUB_ENV"
               ;;
             *)
-              echo "::error::Unsupported service '${{ inputs.service }}'"
+              echo "::error::Unsupported service '$SERVICE_NAME'"
               exit 1
               ;;
           esac
 
       - name: Build Container Image
         id: build
+        env:
+          COMMIT_SHA: ${{ inputs.commit }}
+          SERVICE_NAME: ${{ inputs.service }}
         run: |
           set -euo pipefail
           args=(
             --file "$DOCKERFILE"
             --tag "local/${IMAGE_NAME}:${IMAGE_TAG}"
-            --label "org.opencontainers.image.revision=${{ inputs.commit }}"
-            --label "ewaste.service=${{ inputs.service }}"
+            --label "org.opencontainers.image.revision=$COMMIT_SHA"
+            --label "ewaste.service=$SERVICE_NAME"
           )
           if [ -n "$BUILD_TARGET" ]; then
             args+=(--target "$BUILD_TARGET")
@@ -247,7 +256,7 @@ jobs:
 
           IMAGE_ID=$(docker image inspect --format '{{.Id}}' "local/${IMAGE_NAME}:${IMAGE_TAG}")
           echo "image_id=$IMAGE_ID" >> "$GITHUB_OUTPUT"
-          echo "Built ${{ inputs.service }} image: local/${IMAGE_NAME}:${IMAGE_TAG} ($IMAGE_ID)"
+          echo "Built $SERVICE_NAME image: local/${IMAGE_NAME}:${IMAGE_TAG} ($IMAGE_ID)"
 
       # ------------------------------------------------------------------------
       # Software Bill of Materials (SBOM) Generation via Syft
@@ -327,10 +336,12 @@ jobs:
           ref: ${{ inputs.commit }}
 
       - name: Map Deployment Service Details
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
+          SERVICE_NAME: ${{ inputs.service }}
         run: |
           set -euo pipefail
-          TARGET_ENV="${{ inputs.environment }}"
-          case "${{ inputs.service }}" in
+          case "$SERVICE_NAME" in
             ui)
               echo "IMAGE_NAME=workflow-ui" >> "$GITHUB_ENV"
               echo "APP_NAME=aca-ewastescalable-${TARGET_ENV}-ui" >> "$GITHUB_ENV"
@@ -362,9 +373,11 @@ jobs:
           esac
 
       - name: Log in to Azure Container Registry
+        env:
+          AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
         run: |
           set -euo pipefail
-          ACR_NAME=$(echo "${{ secrets.AZURE_ACR_NAME }}" | cut -d'.' -f1)
+          ACR_NAME=$(echo "$AZURE_ACR_NAME" | cut -d'.' -f1)
           echo "ACR_NAME=$ACR_NAME" >> "$GITHUB_ENV"
           echo "ACR_SERVER=${ACR_NAME}.azurecr.io" >> "$GITHUB_ENV"
 
@@ -395,14 +408,18 @@ jobs:
 
       - name: Publish Image and Resolve Immutable Digest
         id: publish
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
+          COMMIT_SHA: ${{ inputs.commit }}
+          ROLLBACK_TAG: ${{ inputs.rollback_tag }}
+          SERVICE_NAME: ${{ inputs.service }}
         run: |
           set -euo pipefail
-          TARGET_ENV="${{ inputs.environment }}"
-          SHORT_SHA=$(echo "${{ inputs.commit }}" | cut -c1-7)
+          SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
           TARGET_TAG="${TARGET_ENV}-${SHORT_SHA}"
           REPO="${ACR_SERVER}/${IMAGE_NAME}"
 
-          if [ -z "${{ inputs.rollback_tag }}" ]; then
+          if [ -z "$ROLLBACK_TAG" ]; then
             echo "Loading scanned image archive..."
             docker load --input image.tar.gz
 
@@ -410,11 +427,11 @@ jobs:
             docker tag "local/${IMAGE_NAME}:${TARGET_TAG}" "${REPO}:${TARGET_TAG}"
 
             # Retain legacy image names for seamless migration compatibility
-            if [ "${{ inputs.service }}" = "api" ]; then
+            if [ "$SERVICE_NAME" = "api" ]; then
               docker tag "local/${IMAGE_NAME}:${TARGET_TAG}" "${ACR_SERVER}/workflow-api:${TARGET_TAG}"
               docker push "${ACR_SERVER}/workflow-api:${TARGET_TAG}"
             fi
-            if [ "${{ inputs.service }}" = "analytics" ]; then
+            if [ "$SERVICE_NAME" = "analytics" ]; then
               docker tag "local/${IMAGE_NAME}:${TARGET_TAG}" "${ACR_SERVER}/workflow-analytics:${TARGET_TAG}"
               docker push "${ACR_SERVER}/workflow-analytics:${TARGET_TAG}"
             fi
@@ -428,7 +445,7 @@ jobs:
             fi
             DEPLOYED_TAG="$TARGET_TAG"
           else
-            RAW_INPUT="${{ inputs.rollback_tag }}"
+            RAW_INPUT="$ROLLBACK_TAG"
             if [ "$(echo "$RAW_INPUT" | tr '[:lower:]' '[:upper:]')" = "PREVIOUS" ]; then
               echo "Resolving N-1 previous release tag from ACR repository: $IMAGE_NAME..."
               DEPLOYED_TAG=$(az acr repository show-tags --name "$ACR_NAME" --repository "$IMAGE_NAME" \
@@ -453,21 +470,24 @@ jobs:
           echo "Immutable release digest: $DIGEST_REF"
 
       - name: Switch Azure CLI Context to Deployment Service Principal
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
           set -euo pipefail
-          SP_APP_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
-          SP_PASS=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)
-          SP_TENANT=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)
-          SP_SUB=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)
+          SP_APP_ID=$(echo "$AZURE_CREDENTIALS" | jq -r .clientId)
+          SP_PASS=$(echo "$AZURE_CREDENTIALS" | jq -r .clientSecret)
+          SP_TENANT=$(echo "$AZURE_CREDENTIALS" | jq -r .tenantId)
+          SP_SUB=$(echo "$AZURE_CREDENTIALS" | jq -r .subscriptionId)
           echo "::add-mask::$SP_PASS"
           az login --service-principal -u "$SP_APP_ID" -p "$SP_PASS" --tenant "$SP_TENANT" --output none
           az account set --subscription "$SP_SUB"
 
       - name: Deploy Image to Azure Container Apps
+        env:
+          DIGEST_REF: ${{ steps.publish.outputs.digest }}
+          RG: ${{ inputs.resource_group }}
         run: |
           set -euo pipefail
-          DIGEST_REF="${{ steps.publish.outputs.digest }}"
-          RG="${{ inputs.resource_group }}"
 
           echo "Updating $APP_NAME in $RG with image digest: $DIGEST_REF..."
           az containerapp update \
@@ -492,9 +512,10 @@ jobs:
 
       - name: Prune Stale Image Tags in ACR (Keep Last 3)
         if: inputs.rollback_tag == ''
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
         run: |
           set -euo pipefail
-          TARGET_ENV="${{ inputs.environment }}"
           OLD_TAGS=$(az acr repository show-tags --name "$ACR_NAME" --repository "$IMAGE_NAME" \
             --orderby time_desc --output tsv 2>/dev/null | grep "^${TARGET_ENV}-" | tail -n +4 || true)
           for TAG in $OLD_TAGS; do
@@ -504,31 +525,39 @@ jobs:
 
       - name: Record Release Evidence
         if: always() && steps.publish.outputs.digest != ''
+        env:
+          SERVICE_NAME: ${{ inputs.service }}
+          TARGET_ENV: ${{ inputs.environment }}
+          COMMIT_SHA: ${{ inputs.commit }}
+          ROLLBACK_TAG: ${{ inputs.rollback_tag }}
+          DIGEST_REF: ${{ steps.publish.outputs.digest }}
+          DEPLOYED_TAG: ${{ steps.publish.outputs.deployed_tag }}
+          OUTCOME: ${{ job.status }}
+          SERVER_URL: ${{ github.server_url }}
+          REPO_NAME: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          DIGEST_REF="${{ steps.publish.outputs.digest }}"
-          DEPLOYED_TAG="${{ steps.publish.outputs.deployed_tag }}"
-          OUTCOME="${{ job.status }}"
 
           jq -n \
-            --arg service "${{ inputs.service }}" \
+            --arg service "$SERVICE_NAME" \
             --arg app "$APP_NAME" \
-            --arg environment "${{ inputs.environment }}" \
+            --arg environment "$TARGET_ENV" \
             --arg tag "$DEPLOYED_TAG" \
             --arg digest "$DIGEST_REF" \
-            --arg commit "${{ inputs.commit }}" \
-            --arg rollback "${{ inputs.rollback_tag }}" \
+            --arg commit "$COMMIT_SHA" \
+            --arg rollback "$ROLLBACK_TAG" \
             --arg outcome "$OUTCOME" \
-            --arg run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg run "${SERVER_URL}/${REPO_NAME}/actions/runs/${RUN_ID}" \
             '{service:$service, app:$app, environment:$environment, tag:$tag, digest:$digest, commit:$commit, rollback:$rollback, outcome:$outcome, run:$run}' \
-            > "release-${{ inputs.service }}.json"
+            > "release-${SERVICE_NAME}.json"
 
           {
-            echo "### Deployed Service: \`${{ inputs.service }}\` → \`${APP_NAME}\`"
+            echo "### Deployed Service: \`${SERVICE_NAME}\` → \`${APP_NAME}\`"
             echo "- **Status:** \`${OUTCOME}\`"
             echo "- **Deployed Tag:** \`${DEPLOYED_TAG}\`"
             echo "- **Digest:** \`${DIGEST_REF}\`"
-            echo "- **Environment:** \`${{ inputs.environment }}\`"
+            echo "- **Environment:** \`${TARGET_ENV}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Retain Release Evidence
