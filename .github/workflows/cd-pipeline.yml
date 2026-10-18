@@ -220,25 +220,79 @@ jobs:
           echo "========================================================"
 
   # ============================================================================
-  # STAGE 1: PER-SERVICE PLAN (EWSS-19)
-  # Decides which services ship: the ones whose code changed, the ones named
-  # on a manual run, or all of them after a pipeline or database change. A
-  # service ships only if its container app exists in the target environment.
+  # STAGE 1a: DISCOVER THE TARGET ENVIRONMENT (EWSS-19)
+  # The only plan-stage job that signs in to Azure. Its outputs are plain app
+  # names and hostnames: GitHub drops any job output that contains a line of a
+  # secret used in that job, and the multi-line AZURE_CREDENTIALS JSON includes
+  # a bare "{" line, so a JSON output from this job would be discarded.
   # ============================================================================
-  plan-services:
-    name: Plan Services (${{ needs.resolve-environment.outputs.environment }})
+  discover-apps:
+    name: Discover Container Apps (${{ needs.resolve-environment.outputs.environment }})
     needs: [resolve-environment]
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-environment.outputs.environment }}
+    outputs:
+      apps: ${{ steps.apps.outputs.apps }}
+      auth_fqdn: ${{ steps.fqdns.outputs.auth }}
+      api_fqdn: ${{ steps.fqdns.outputs.api }}
+      claim_fqdn: ${{ steps.fqdns.outputs.claim }}
+      custody_fqdn: ${{ steps.fqdns.outputs.custody }}
+      ui_fqdn: ${{ steps.fqdns.outputs.ui }}
+      analytic_fqdn: ${{ steps.fqdns.outputs.analytic }}
+    steps:
+      - name: Authenticate to Microsoft Azure
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: List Container Apps in the Target Environment
+        id: apps
+        env:
+          RG: ${{ needs.resolve-environment.outputs.resource_group }}
+        run: |
+          set -euo pipefail
+          APPS=$(az containerapp list --resource-group "$RG" --query '[].name' --output tsv | tr -d '\r' | sort | xargs)
+          echo "Container apps in $RG: ${APPS:-<none>}"
+          echo "apps=$APPS" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Service Hostnames
+        id: fqdns
+        env:
+          RG: ${{ needs.resolve-environment.outputs.resource_group }}
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+          APPS: ${{ steps.apps.outputs.apps }}
+        run: |
+          set -euo pipefail
+          for suffix in auth api claim custody ui analytic; do
+            name="aca-ewastescalable-${TARGET_ENV}-${suffix}"
+            host=""
+            if [[ " $APPS " == *" $name "* ]]; then
+              host=$(az containerapp show --name "$name" --resource-group "$RG" \
+                --query properties.configuration.ingress.fqdn --output tsv | tr -d '\r')
+            fi
+            echo "${suffix}=${host}" >> "$GITHUB_OUTPUT"
+          done
+
+  # ============================================================================
+  # STAGE 1b: PER-SERVICE PLAN (EWSS-19)
+  # Decides which services ship: the ones whose code changed, the ones named
+  # on a manual run, or all of them after a pipeline or database change. A
+  # service ships only if its container app exists in the target environment.
+  # This job uses no secrets, so its JSON matrix output reaches the next stage.
+  # ============================================================================
+  plan-services:
+    name: Plan Services (${{ needs.resolve-environment.outputs.environment }})
+    needs: [resolve-environment, discover-apps]
+    runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       count: ${{ steps.plan.outputs.count }}
       commit: ${{ steps.commit.outputs.sha }}
       image_tag: ${{ steps.commit.outputs.image_tag }}
       ui_build_args: ${{ steps.endpoints.outputs.ui_build_args }}
-      aca_api_fqdn: ${{ steps.endpoints.outputs.aca_api_fqdn }}
-      aca_ui_fqdn: ${{ steps.endpoints.outputs.aca_ui_fqdn }}
-      aca_analytics_fqdn: ${{ steps.endpoints.outputs.aca_analytics_fqdn }}
+      aca_api_fqdn: ${{ needs.discover-apps.outputs.api_fqdn }}
+      aca_ui_fqdn: ${{ needs.discover-apps.outputs.ui_fqdn }}
+      aca_analytics_fqdn: ${{ needs.discover-apps.outputs.analytic_fqdn }}
     steps:
       - name: Checkout Code Repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -260,20 +314,6 @@ jobs:
       - name: Test the Service Planner
         run: python3 -m unittest discover -s scripts/ci
 
-      - name: Authenticate to Microsoft Azure
-        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: List Container Apps in the Target Environment
-        env:
-          RG: ${{ needs.resolve-environment.outputs.resource_group }}
-        run: |
-          set -euo pipefail
-          az containerapp list --resource-group "$RG" --query '[].name' --output tsv > existing-apps.txt
-          echo "Container apps in $RG:"
-          cat existing-apps.txt
-
       - name: Plan Services to Ship
         id: plan
         env:
@@ -282,8 +322,10 @@ jobs:
           REQUESTED: ${{ inputs.services }}
           PUSH_BEFORE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          APPS: ${{ needs.discover-apps.outputs.apps }}
         run: |
           set -euo pipefail
+          tr ' ' '\n' <<< "$APPS" | sed '/^$/d' > existing-apps.txt
           select=()
           case "$EVENT_NAME" in
             workflow_dispatch)
@@ -321,36 +363,28 @@ jobs:
             echo "split_backend=$(jq -r '.groups["go-services"]' plan.json)"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Resolve Service Endpoints
+      - name: Build UI Arguments
         id: endpoints
         env:
-          RG: ${{ needs.resolve-environment.outputs.resource_group }}
-          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
           SPLIT_BACKEND: ${{ steps.plan.outputs.split_backend }}
+          API: ${{ needs.discover-apps.outputs.api_fqdn }}
+          AUTH: ${{ needs.discover-apps.outputs.auth_fqdn }}
+          CLAIM: ${{ needs.discover-apps.outputs.claim_fqdn }}
+          CUSTODY: ${{ needs.discover-apps.outputs.custody_fqdn }}
         run: |
           set -euo pipefail
-          fqdn() {
-            grep -qx "aca-ewastescalable-${TARGET_ENV}-$1" existing-apps.txt || return 0
-            az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-$1" --resource-group "$RG" \
-              --query properties.configuration.ingress.fqdn --output tsv
-          }
-          API=$(fqdn api); UI=$(fqdn ui); ANALYTICS=$(fqdn analytic)
-
           ARGS="NEXT_PUBLIC_USE_MOCK_AUTH=false"
           if [ -n "$API" ]; then
             ARGS+=$'\n'"NEXT_PUBLIC_API_URL=https://$API"$'\n'"NEXT_PUBLIC_API_BASE_URL=https://$API"$'\n'"API_PROXY_TARGET=https://$API"
           fi
           # Split API routing only once all four Go services are live.
           if [ "$SPLIT_BACKEND" = "true" ]; then
-            ARGS+=$'\n'"IDENTITY_ACCESS_URL=https://$(fqdn auth)"
+            ARGS+=$'\n'"IDENTITY_ACCESS_URL=https://$AUTH"
             ARGS+=$'\n'"BATCH_WORKFLOW_URL=https://$API"
-            ARGS+=$'\n'"CLAIM_LOGISTICS_URL=https://$(fqdn claim)"
-            ARGS+=$'\n'"CUSTODY_VERIFICATION_URL=https://$(fqdn custody)"
+            ARGS+=$'\n'"CLAIM_LOGISTICS_URL=https://$CLAIM"
+            ARGS+=$'\n'"CUSTODY_VERIFICATION_URL=https://$CUSTODY"
           fi
           {
-            echo "aca_api_fqdn=$API"
-            echo "aca_ui_fqdn=$UI"
-            echo "aca_analytics_fqdn=$ANALYTICS"
             echo "ui_build_args<<EOF_UI_ARGS"
             echo "$ARGS"
             echo "EOF_UI_ARGS"
@@ -432,11 +466,13 @@ jobs:
       # 3.1 BACKEND API AUTHENTICATION SMOKE TEST
       # ------------------------------------------------------------------------
       - name: Execute Seeded-User Login API Smoke Test
+        env:
+          API_FQDN: ${{ needs.plan-services.outputs.aca_api_fqdn }}
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
         run: |
-          API_FQDN="${{ needs.plan-services.outputs.aca_api_fqdn }}"
           if [ -n "$API_FQDN" ]; then
             API_URL="https://${API_FQDN}/api/v1/auth/login"
-            CORRELATION_ID="smoke-api-${{ needs.resolve-environment.outputs.environment }}-$(date +%s)"
+            CORRELATION_ID="smoke-api-${TARGET_ENV}-$(date +%s)"
             echo "Executing API authentication test with correlation ID: $CORRELATION_ID"
 
             RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$API_URL" \
@@ -457,8 +493,9 @@ jobs:
       # 3.2 FRONTEND UI ACCESSIBILITY SMOKE TEST
       # ------------------------------------------------------------------------
       - name: Execute Frontend UI Endpoint Smoke Test
+        env:
+          UI_FQDN: ${{ needs.plan-services.outputs.aca_ui_fqdn }}
         run: |
-          UI_FQDN="${{ needs.plan-services.outputs.aca_ui_fqdn }}"
           if [ -n "$UI_FQDN" ]; then
             UI_URL="https://${UI_FQDN}/"
             echo "Verifying Frontend UI accessibility at: $UI_URL"
@@ -472,10 +509,10 @@ jobs:
       # 3.3 ANALYTICS WORKER & EVENT HUBS INTEGRATION SMOKE TEST
       # ------------------------------------------------------------------------
       - name: Verify Matcher Without Synthetic Business Events
+        env:
+          ANALYTICS_FQDN: ${{ needs.plan-services.outputs.aca_analytics_fqdn }}
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
         run: |
-          ANALYTICS_FQDN="${{ needs.plan-services.outputs.aca_analytics_fqdn }}"
-          TARGET_ENV="${{ needs.resolve-environment.outputs.environment }}"
-
           if [ -n "$ANALYTICS_FQDN" ] && [ "$TARGET_ENV" == "dev" ]; then
             echo "Verifying Analytics ingress accessibility at: https://$ANALYTICS_FQDN/readyz"
             for i in {1..12}; do
@@ -503,11 +540,14 @@ jobs:
       # 3.4 DEPLOYMENT SUMMARY & ARCHIVAL BANNER
       # ------------------------------------------------------------------------
       - name: Confirm Deployment & Archival State
+        env:
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+          DEPLOYMENT_DESC: ${{ needs.resolve-environment.outputs.deployment_desc }}
         run: |
           echo "======================================================================"
           echo "  DEPLOYMENT & AUDIT SUITE COMPLETED SUCCESSFULLY"
-          echo "  - Environment Target: ${{ needs.resolve-environment.outputs.environment }}"
-          echo "  - Deployment Scope: ${{ needs.resolve-environment.outputs.deployment_desc }}"
+          echo "  - Environment Target: ${TARGET_ENV}"
+          echo "  - Deployment Scope: ${DEPLOYMENT_DESC}"
           echo "  - Database Status: Migrations are a prerequisite; authenticated matcher lookup verified"
           echo "  - Container Release: Per-service (see the Service Plan and each Ship job summary)"
           echo "  - Event Streaming: Kafka/MySQL persistence tested in matcher CI; live checks respect environment ingress"

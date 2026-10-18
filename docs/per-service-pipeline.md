@@ -10,10 +10,16 @@ every planner input (the catalogue, the pipeline files, `scripts/ci/` and the
 matcher contracts), so a change to any of them reaches the planner. After it
 resolves the target environment:
 
-1. **Plan Services** lists the container apps in `rg-ewastescalable-<env>` and runs
-   `scripts/ci/plan_services.py` against `.github/service-catalog.json`. The
-   job summary shows each service, whether it ships and why.
-2. **Ship** runs `service-pipeline.yml` once per planned service, in parallel.
+1. **Discover Container Apps** signs in to Azure and lists the container apps
+   in `rg-ewastescalable-<env>` and their hostnames. It is the only plan-stage
+   job that uses secrets, and it outputs plain text only: GitHub drops any job
+   output containing a line of a secret that job used, and the multi-line
+   `AZURE_CREDENTIALS` JSON has a bare `{` line.
+2. **Plan Services** uses no secrets. It runs `scripts/ci/plan_services.py`
+   against `.github/service-catalog.json` and the discovered apps, so its JSON
+   matrix reaches the Ship stage. The job summary shows each service, whether
+   it ships and why.
+3. **Ship** runs `service-pipeline.yml` once per planned service, in parallel.
    One service failing does not stop the others.
    - **Test**: only that service's stack (Go, Python or Node).
    - **Build & Scan**: builds the image, generates an SPDX SBOM with Syft and
@@ -22,7 +28,7 @@ resolves the target environment:
      ACR and updates only that service's container app by `@sha256` digest. It
      then waits until the new revision is ready on that digest and keeps a
      release record (service, tag, digest, commit, reason) for 90 days.
-3. **DAST** and **smoke** checks run against the environment once the planned
+4. **DAST** and **smoke** checks run against the environment once the planned
    services have shipped.
 
 ## Which services ship
