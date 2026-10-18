@@ -242,10 +242,8 @@ jobs:
           echo " Executing Liquibase: $COMMAND on $MYSQL_HOST / $MYSQL_DB"
           echo "=========================================================="
 
-          CONTEXT_PARAM=""
-          if [ "$TARGET_ENV" != "prod" ]; then
-            CONTEXT_PARAM="--contexts=seed"
-          fi
+          # Seed data is applied across all environments including prod
+          CONTEXT_PARAM="--contexts=seed"
 
           liquibase \
             --changelog-file=database/changelog-master.yaml \
