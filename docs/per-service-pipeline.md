@@ -52,7 +52,7 @@ Each service can build, test, scan, and deploy completely independently. One ser
 | `claim`     | Claim Logistics Service             | Go 1.26                 | `aca-ewastescalable-${ENV}-claim`    | `claim-logistics-svc`      | `src/backend/Dockerfile` (`SERVICE=claim-logistics`)      |
 | `custody`   | Custody & Verification Service      | Go 1.26                 | `aca-ewastescalable-${ENV}-custody`  | `custody-verification-svc` | `src/backend/Dockerfile` (`SERVICE=custody-verification`) |
 | `matcher`   | Matching Worker (Headless)          | Python 3.12             | `aca-ewastescalable-${ENV}-matcher`  | `matching-worker-svc`      | `src/matcher/Dockerfile` (`target=matching-worker`)       |
-| `analytics` | Analytics Worker                    | Python 3.12             | `aca-ewastescalable-${ENV}-analytic` | `analytics-worker-svc`     | `src/matcher/Dockerfile` (`target=analytics-worker`)      |
+| `analytics` | Analytics Worker                    | Python 3.12             | `aca-ewastescalable-${ENV}-analytic` | `analytics-worker-svc`     | `src/matcher/Dockerfile` (`target=legacy`)                |
 
 > **Note on Decoupled Worker Deployments:** In accordance with EWSS-19, `matcher` and `analytics` are deployed independently as headless Azure Container Apps using direct image digest updates (`az containerapp update --image <digest>`). They do not depend on legacy wrapper scripts or synchronous runtime health probes against the private `api` container app ingress.
 

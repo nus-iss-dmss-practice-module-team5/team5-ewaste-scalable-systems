@@ -215,7 +215,7 @@ jobs:
               echo "DOCKERFILE=src/matcher/Dockerfile" >> "$GITHUB_ENV"
               echo "CONTEXT=." >> "$GITHUB_ENV"
               echo "BUILD_ARGS=" >> "$GITHUB_ENV"
-              echo "BUILD_TARGET=analytics-worker" >> "$GITHUB_ENV"
+              echo "BUILD_TARGET=" >> "$GITHUB_ENV"
               ;;
             *)
               echo "::error::Unsupported service '${{ inputs.service }}'"
