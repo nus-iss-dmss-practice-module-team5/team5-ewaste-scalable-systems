@@ -41,6 +41,10 @@ resolves the target environment:
 | Manual run                   | The `services` input: `all` or a list         |
 | Change to a pipeline file    | All available services                        |
 
+On a manual run, `services` takes service names (`identity-access`) or app
+names (`auth`, `api`, `claim`, `custody`, `matcher`, `analytic`, `ui`), in any
+case. An unknown name fails the plan and lists the valid ones.
+
 When you add a path to `global_paths` or a service's `paths`, add it to
 `on.push.paths` in `cd-pipeline.yml` too. `test_plan_services.py` fails until
 you do.

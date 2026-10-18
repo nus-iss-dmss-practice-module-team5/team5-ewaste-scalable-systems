@@ -152,6 +152,32 @@ def touches(service: dict, changed_file: str) -> bool:
     return max(matching)[1]
 
 
+def resolve_requested(requested: list[str], services: list[dict], status: dict[str, str | None]) -> list[str]:
+    """Accept service names, container app suffixes (auth, api, ...) and "all", in any case.
+
+    An app suffix names the service that ships to that app: the available one,
+    else the one that is not being replaced (batch-workflow, not workflow-api).
+    """
+    by_name = {service["name"]: service for service in services}
+    resolved, unknown = [], []
+    for raw in requested:
+        key = raw.strip().lower()
+        if key == "all" or key in by_name:
+            resolved.append(key)
+            continue
+        candidates = [s for s in services if s["app"] == key]
+        candidates.sort(key=lambda s: (status[s["name"]] is not None, "replaced_by" in s))
+        if candidates:
+            resolved.append(candidates[0]["name"])
+        else:
+            unknown.append(raw)
+    if unknown:
+        apps = sorted({s["app"] for s in services})
+        raise PlanError(f"unknown service(s): {', '.join(unknown)}. Use 'all', a service name "
+                        f"({', '.join(by_name)}) or an app name ({', '.join(apps)})")
+    return resolved
+
+
 def plan(catalog: dict, repo_root: Path, environment: str, existing_apps: set[str] | None,
          changed_files: list[str] | None, requested: list[str] | None) -> dict:
     status = availability(catalog, repo_root, environment, existing_apps)
@@ -160,9 +186,7 @@ def plan(catalog: dict, repo_root: Path, environment: str, existing_apps: set[st
     skipped = []
 
     if requested:
-        unknown = [name for name in requested if name not in by_name and name != "all"]
-        if unknown:
-            raise PlanError(f"unknown service(s): {', '.join(unknown)}")
+        requested = resolve_requested(requested, services, status)
         if "all" in requested:
             selected = [s for s in services if status[s["name"]] is None]
             reasons = {s["name"]: "requested: all" for s in selected}

@@ -33,7 +33,7 @@ on:
           - stg
           - prod
       services:
-        description: 'Services to ship: "all", or comma-separated names from .github/service-catalog.json (e.g. "ui" or "claim-logistics,ui")'
+        description: 'Services to ship: "all", or comma-separated service or app names (e.g. "ui", "api" or "claim-logistics,ui"). Any case.'
         required: false
         default: 'all'
       rollback_tag:

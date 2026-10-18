@@ -151,6 +151,10 @@ class TodayOnDevTests(PlanTestCase):
                                     environment="dev", apps=TODAY_APPS)
         self.assertEqual(names, [])
 
+    def test_api_app_name_means_the_combined_api_before_the_split(self):
+        names, _, _ = self.run_plan(services=["api"], environment="dev", apps=TODAY_APPS)
+        self.assertEqual(names, ["workflow-api"])
+
     def test_requesting_a_service_without_an_app_fails(self):
         with self.assertRaisesRegex(ps.PlanError, "cannot ship claim-logistics"):
             self.run_plan(services=["claim-logistics"], environment="dev", apps=TODAY_APPS)
@@ -186,6 +190,13 @@ class AfterSplitTests(PlanTestCase):
         names, _, result = self.run_plan(services=["ui"], environment="dev", apps=ALL_APPS)
         self.assertEqual(names, ["ui"])
         self.assertEqual(result["include"][0]["app_name"], "aca-ewastescalable-dev-ui")
+
+    def test_app_names_and_any_case_select_services(self):
+        """Teammates know the app names (auth, api, ...); accept those too."""
+        names, _, _ = self.run_plan(services=["UI", "api", "Auth"], environment="dev", apps=ALL_APPS)
+        self.assertEqual(names, ["ui", "batch-workflow", "identity-access"])
+        names, _, _ = self.run_plan(services=["analytic"], environment="dev", apps=ALL_APPS)
+        self.assertEqual(names, ["analytics-worker"])
 
     def test_missing_matching_app_keeps_the_combined_worker(self):
         apps = ALL_APPS - {"aca-ewastescalable-dev-matcher"}
@@ -225,6 +236,7 @@ class CliTests(unittest.TestCase):
             code = ps.main(["--catalog", str(REAL_CATALOG), "--services", "nope"])
         self.assertEqual(code, 2)
         self.assertIn("unknown service", err.getvalue())
+        self.assertIn("an app name (analytic, api, auth", err.getvalue())
 
     def test_invalid_environment_exits_2(self):
         with redirect_stderr(io.StringIO()):
