@@ -149,6 +149,7 @@ jobs:
     if: always() && (inputs.rollback_tag != '' || needs.test.result == 'success')
     outputs:
       image_id: ${{ steps.build.outputs.image_id }}
+      image_artifact_id: ${{ steps.upload_image.outputs.artifact-id }}
     steps:
       - name: Checkout Code Repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -279,7 +280,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: security-${{ inputs.environment }}-${{ inputs.service }}-${{ inputs.commit }}
+          name: security-${{ inputs.environment }}-${{ inputs.service }}-${{ inputs.commit }}-${{ github.run_attempt }}
           path: |
             sbom-${{ inputs.service }}.spdx.json
             ${{ steps.grype.outputs.sarif }}
@@ -297,10 +298,12 @@ jobs:
           ls -lh image.tar.gz
 
       - name: Hand Image to Deploy Stage
+        id: upload_image
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: image-${{ inputs.service }}-${{ github.run_attempt }}
           path: image.tar.gz
+          if-no-files-found: error
           retention-days: 1
           compression-level: 0
 
@@ -370,11 +373,25 @@ jobs:
           ACR_TOKEN=$(az acr login --name "$ACR_NAME" --expose-token --query accessToken --output tsv)
           echo "$ACR_TOKEN" | docker login "${ACR_NAME}.azurecr.io" -u 00000000-0000-0000-0000-000000000000 --password-stdin
 
+      # A deploy-only rerun must reuse the successful build's artifact, even
+      # when github.run_attempt has advanced since that build completed.
+      - name: Validate Scanned Image Artifact Reference
+        if: inputs.rollback_tag == ''
+        env:
+          IMAGE_ARTIFACT_ID: ${{ needs.build-scan.outputs.image_artifact_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$IMAGE_ARTIFACT_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Build & Scan did not provide an image artifact ID. Start a new workflow run to rebuild the scanned image."
+            exit 1
+          fi
+
       - name: Download Scanned Image
         if: inputs.rollback_tag == ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: image-${{ inputs.service }}-${{ github.run_attempt }}
+          artifact-ids: ${{ needs.build-scan.outputs.image_artifact_id }}
+          merge-multiple: true
 
       - name: Publish Image and Resolve Immutable Digest
         id: publish
@@ -458,7 +475,7 @@ jobs:
             export RG="$RG"
             export MATCHER_IMAGE="$DIGEST_REF"
             export MATCHER_SIGNING_SECRET="${{ secrets.MATCHER_SIGNING_SECRET }}"
-            export ANALYTICS_SERVICE_TOKEN="${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}"
+            export ANALYTICS_SERVICE_TOKEN="${{ secrets.ANALYTICS_SERVICE_TOKEN }}"
             bash scripts/deploy-matcher.sh
           else
             echo "Updating $APP_NAME in $RG with image digest: $DIGEST_REF..."
@@ -528,6 +545,6 @@ jobs:
         if: always() && steps.publish.outputs.digest != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-${{ inputs.environment }}-${{ inputs.service }}-${{ inputs.commit }}
+          name: release-${{ inputs.environment }}-${{ inputs.service }}-${{ inputs.commit }}-${{ github.run_attempt }}
           path: release-${{ inputs.service }}.json
           retention-days: 90
