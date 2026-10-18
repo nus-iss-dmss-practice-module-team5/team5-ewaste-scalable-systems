@@ -77,7 +77,7 @@ jobs:
       - name: Run Go Vet and Tests
         if: inputs.service == 'auth' || inputs.service == 'api' || inputs.service == 'claim' || inputs.service == 'custody'
         working-directory: src/backend
-        run: |
+        run: |\
           set -euo pipefail
           echo "Running shared backend Go test suite..."
           go vet ./...
@@ -107,7 +107,7 @@ jobs:
       - name: Run Frontend Tests
         if: inputs.service == 'ui'
         working-directory: src/frontend
-        run: |
+        run: |\
           set -euo pipefail
           echo "Installing frontend dependencies..."
           npm ci
@@ -130,7 +130,7 @@ jobs:
       - name: Run Python Worker Tests
         if: inputs.service == 'matcher' || inputs.service == 'analytics'
         working-directory: src/matcher
-        run: |
+        run: |\
           set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest
@@ -161,7 +161,7 @@ jobs:
       # ------------------------------------------------------------------------
       - name: Resolve Build Parameters
         id: params
-        run: |
+        run: |\
           set -euo pipefail
           SHORT_SHA=$(echo "${{ inputs.commit }}" | cut -c1-7)
           IMAGE_TAG="${{ inputs.environment }}-${SHORT_SHA}"
@@ -225,7 +225,7 @@ jobs:
 
       - name: Build Container Image
         id: build
-        run: |
+        run: |\
           set -euo pipefail
           args=(
             --file "$DOCKERFILE"
@@ -291,7 +291,7 @@ jobs:
       # Export Scanned Image for Secure VNet Deployment
       # ------------------------------------------------------------------------
       - name: Export Scanned Image
-        run: |
+        run: |\
           set -euo pipefail
           echo "Exporting verified image to transfer bundle..."
           docker save "local/${IMAGE_NAME}:${IMAGE_TAG}" | gzip -1 > image.tar.gz
@@ -327,7 +327,7 @@ jobs:
           ref: ${{ inputs.commit }}
 
       - name: Map Deployment Service Details
-        run: |
+        run: |\
           set -euo pipefail
           TARGET_ENV="${{ inputs.environment }}"
           case "${{ inputs.service }}" in
@@ -362,7 +362,7 @@ jobs:
           esac
 
       - name: Log in to Azure Container Registry
-        run: |
+        run: |\
           set -euo pipefail
           ACR_NAME=$(echo "${{ secrets.AZURE_ACR_NAME }}" | cut -d'.' -f1)
           echo "ACR_NAME=$ACR_NAME" >> "$GITHUB_ENV"
@@ -379,7 +379,7 @@ jobs:
         if: inputs.rollback_tag == ''
         env:
           IMAGE_ARTIFACT_ID: ${{ needs.build-scan.outputs.image_artifact_id }}
-        run: |
+        run: |\
           set -euo pipefail
           if [[ ! "$IMAGE_ARTIFACT_ID" =~ ^[0-9]+$ ]]; then
             echo "::error::Build & Scan did not provide an image artifact ID. Start a new workflow run to rebuild the scanned image."
@@ -395,7 +395,7 @@ jobs:
 
       - name: Publish Image and Resolve Immutable Digest
         id: publish
-        run: |
+        run: |\
           set -euo pipefail
           TARGET_ENV="${{ inputs.environment }}"
           SHORT_SHA=$(echo "${{ inputs.commit }}" | cut -c1-7)
@@ -453,7 +453,7 @@ jobs:
           echo "Immutable release digest: $DIGEST_REF"
 
       - name: Switch Azure CLI Context to Deployment Service Principal
-        run: |
+        run: |\
           set -euo pipefail
           SP_APP_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
           SP_PASS=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)
@@ -464,45 +464,35 @@ jobs:
           az account set --subscription "$SP_SUB"
 
       - name: Deploy Image to Azure Container Apps
-        run: |
+        run: |\
           set -euo pipefail
           DIGEST_REF="${{ steps.publish.outputs.digest }}"
           RG="${{ inputs.resource_group }}"
 
-          if [ "${{ inputs.service }}" = "analytics" ]; then
-            echo "Invoking matcher and analytics deployment integration script..."
-            export TARGET_ENV="${{ inputs.environment }}"
-            export RG="$RG"
-            export MATCHER_IMAGE="$DIGEST_REF"
-            export MATCHER_SIGNING_SECRET="${{ secrets.MATCHER_SIGNING_SECRET }}"
-            export ANALYTICS_SERVICE_TOKEN="${{ secrets.ANALYTICS_SERVICE_TOKEN }}"
-            bash scripts/deploy-matcher.sh
-          else
-            echo "Updating $APP_NAME in $RG with image digest: $DIGEST_REF..."
-            az containerapp update \
-              --name "$APP_NAME" \
-              --resource-group "$RG" \
-              --image "$DIGEST_REF" \
-              --output none
+          echo "Updating $APP_NAME in $RG with image digest: $DIGEST_REF..."
+          az containerapp update \
+            --name "$APP_NAME" \
+            --resource-group "$RG" \
+            --image "$DIGEST_REF" \
+            --output none
 
-            echo "Awaiting Container App revision health confirmation..."
-            for attempt in $(seq 1 18); do
-              READY_REV=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" \
-                --query 'properties.latestReadyRevisionName' -o tsv 2>/dev/null || echo "")
-              LATEST_REV=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" \
-                --query 'properties.latestRevisionName' -o tsv 2>/dev/null || echo "")
-              if [ -n "$LATEST_REV" ] && [ "$LATEST_REV" = "$READY_REV" ]; then
-                echo "Container App revision $LATEST_REV is healthy and ready."
-                break
-              fi
-              echo "Waiting for revision readiness ($attempt/18)..."
-              sleep 10
-            done
-          fi
+          echo "Awaiting Container App revision health confirmation..."
+          for attempt in $(seq 1 18); do
+            READY_REV=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" \
+              --query 'properties.latestReadyRevisionName' -o tsv 2>/dev/null || echo "")
+            LATEST_REV=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" \
+              --query 'properties.latestRevisionName' -o tsv 2>/dev/null || echo "")
+            if [ -n "$LATEST_REV" ] && [ "$LATEST_REV" = "$READY_REV" ]; then
+              echo "Container App revision $LATEST_REV is healthy and ready."
+              break
+            fi
+            echo "Waiting for revision readiness ($attempt/18)..."
+            sleep 10
+          done
 
       - name: Prune Stale Image Tags in ACR (Keep Last 3)
         if: inputs.rollback_tag == ''
-        run: |
+        run: |\
           set -euo pipefail
           TARGET_ENV="${{ inputs.environment }}"
           OLD_TAGS=$(az acr repository show-tags --name "$ACR_NAME" --repository "$IMAGE_NAME" \
@@ -514,7 +504,7 @@ jobs:
 
       - name: Record Release Evidence
         if: always() && steps.publish.outputs.digest != ''
-        run: |
+        run: |\
           set -euo pipefail
           DIGEST_REF="${{ steps.publish.outputs.digest }}"
           DEPLOYED_TAG="${{ steps.publish.outputs.deployed_tag }}"
