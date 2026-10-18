@@ -1,0 +1,533 @@
+name: Service Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: 'Service identifier: ui, auth, api, claim, custody, matcher, analytics'
+        required: true
+        type: string
+      environment:
+        description: 'Target Azure environment: dev, stg, prod'
+        required: true
+        type: string
+      resource_group:
+        description: 'Azure Resource Group name'
+        required: true
+        type: string
+      commit:
+        description: 'Commit SHA to checkout and build'
+        required: true
+        type: string
+      rollback_tag:
+        description: 'Optional tag to redeploy (e.g. PREVIOUS, or specific tag like dev-a1b2c3d)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      AZURE_CREDENTIALS:
+        required: true
+      AZURE_ACR_NAME:
+        required: true
+      MATCHER_SIGNING_SECRET:
+        required: false
+      ANALYTICS_SERVICE_TOKEN:
+        required: false
+    outputs:
+      digest:
+        description: 'Deployed immutable image digest'
+        value: ${{ jobs.deploy.outputs.digest }}
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+env:
+  GO_VERSION: "1.26"
+  NODE_VERSION: "22"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ============================================================================
+  # STAGE 1: STACK-SPECIFIC UNIT & INTEGRATION TESTS
+  # Runs on GitHub-hosted runner before packaging
+  # ============================================================================
+  test:
+    name: Test (${{ inputs.service }})
+    if: inputs.rollback_tag == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.commit }}
+
+      # ------------------------------------------------------------------------
+      # Go Runtime & Tests (auth, api, claim, custody)
+      # ------------------------------------------------------------------------
+      - name: Setup Go Runtime
+        if: inputs.service == 'auth' || inputs.service == 'api' || inputs.service == 'claim' || inputs.service == 'custody'
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: src/backend/go.sum
+
+      - name: Run Go Vet and Tests
+        if: inputs.service == 'auth' || inputs.service == 'api' || inputs.service == 'claim' || inputs.service == 'custody'
+        working-directory: src/backend
+        run: |
+          set -euo pipefail
+          echo "Running shared backend Go test suite..."
+          go vet ./...
+          go test -race ./...
+
+          case "${{ inputs.service }}" in
+            auth) CMD_DIR="identity-access" ;;
+            api) CMD_DIR="batch-workflow" ;;
+            claim) CMD_DIR="claim-logistics" ;;
+            custody) CMD_DIR="custody-verification" ;;
+          esac
+
+          echo "Verifying service binary compilation for cmd/$CMD_DIR..."
+          go build -o /dev/null "./cmd/$CMD_DIR"
+
+      # ------------------------------------------------------------------------
+      # Node Runtime & Tests (ui)
+      # ------------------------------------------------------------------------
+      - name: Setup Node.js Runtime
+        if: inputs.service == 'ui'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+
+      - name: Run Frontend Tests
+        if: inputs.service == 'ui'
+        working-directory: src/frontend
+        run: |
+          set -euo pipefail
+          echo "Installing frontend dependencies..."
+          npm ci
+          echo "Executing frontend lint..."
+          npm run lint --if-present
+          echo "Executing frontend test suite..."
+          npm test -- --watchAll=false
+
+      # ------------------------------------------------------------------------
+      # Python Runtime & Tests (matcher, analytics)
+      # ------------------------------------------------------------------------
+      - name: Setup Python Runtime
+        if: inputs.service == 'matcher' || inputs.service == 'analytics'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: src/matcher/requirements.txt
+
+      - name: Run Python Worker Tests
+        if: inputs.service == 'matcher' || inputs.service == 'analytics'
+        working-directory: src/matcher
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+          echo "Executing pytest for matcher/analytics..."
+          python -m pytest -q tests
+
+  # ============================================================================
+  # STAGE 2: CONTAINER PACKAGING, SBOM & VULNERABILITY SCANNING
+  # Builds image locally, runs Syft SBOM & Grype critical vulnerability gate
+  # ============================================================================
+  build-scan:
+    name: Build & Scan (${{ inputs.service }})
+    needs: [test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: always() && (inputs.rollback_tag != '' || needs.test.result == 'success')
+    outputs:
+      image_id: ${{ steps.build.outputs.image_id }}
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.commit }}
+
+      # ------------------------------------------------------------------------
+      # Resolve Service Build Parameters
+      # ------------------------------------------------------------------------
+      - name: Resolve Build Parameters
+        id: params
+        run: |
+          set -euo pipefail
+          SHORT_SHA=$(echo "${{ inputs.commit }}" | cut -c1-7)
+          IMAGE_TAG="${{ inputs.environment }}-${SHORT_SHA}"
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+          case "${{ inputs.service }}" in
+            ui)
+              echo "IMAGE_NAME=workflow-ui" >> "$GITHUB_ENV"
+              echo "DOCKERFILE=src/frontend/Dockerfile" >> "$GITHUB_ENV"
+              echo "CONTEXT=src/frontend" >> "$GITHUB_ENV"
+              echo "BUILD_ARGS=NEXT_PUBLIC_USE_MOCK_AUTH=false BUILD_ID=$SHORT_SHA" >> "$GITHUB_ENV"
+              echo "BUILD_TARGET=" >> "$GITHUB_ENV"
+              ;;
+            auth)
+              echo "IMAGE_NAME=identity-access-svc" >> "$GITHUB_ENV"
+              echo "DOCKERFILE=src/backend/Dockerfile" >> "$GITHUB_ENV"
+              echo "CONTEXT=src/backend" >> "$GITHUB_ENV"
+              echo "BUILD_ARGS=SERVICE=identity-access" >> "$GITHUB_ENV"
+              echo "BUILD_TARGET=" >> "$GITHUB_ENV"
+              ;;
+            api)
+              echo "IMAGE_NAME=batch-workflow-svc" >> "$GITHUB_ENV"
+              echo "DOCKERFILE=src/backend/Dockerfile" >> "$GITHUB_ENV"
+              echo "CONTEXT=src/backend" >> "$GITHUB_ENV"
+              echo "BUILD_ARGS=SERVICE=batch-workflow" >> "$GITHUB_ENV"
+              echo "BUILD_TARGET=" >> "$GITHUB_ENV"
+              ;;
+            claim)
+              echo "IMAGE_NAME=claim-logistics-svc" >> "$GITHUB_ENV"
+              echo "DOCKERFILE=src/backend/Dockerfile" >> "$GITHUB_ENV"
+              echo "CONTEXT=src/backend" >> "$GITHUB_ENV"
+              echo "BUILD_ARGS=SERVICE=claim-logistics" >> "$GITHUB_ENV"
+              echo "BUILD_TARGET=" >> "$GITHUB_ENV"
+              ;;
+            custody)
+              echo "IMAGE_NAME=custody-verification-svc" >> "$GITHUB_ENV"
+              echo "DOCKERFILE=src/backend/Dockerfile" >> "$GITHUB_ENV"
+              echo "CONTEXT=src/backend" >> "$GITHUB_ENV"
+              echo "BUILD_ARGS=SERVICE=custody-verification" >> "$GITHUB_ENV"
+              echo "BUILD_TARGET=" >> "$GITHUB_ENV"
+              ;;
+            matcher)
+              echo "IMAGE_NAME=matching-worker-svc" >> "$GITHUB_ENV"
+              echo "DOCKERFILE=src/matcher/Dockerfile" >> "$GITHUB_ENV"
+              echo "CONTEXT=." >> "$GITHUB_ENV"
+              echo "BUILD_ARGS=" >> "$GITHUB_ENV"
+              echo "BUILD_TARGET=matching-worker" >> "$GITHUB_ENV"
+              ;;
+            analytics)
+              echo "IMAGE_NAME=analytics-worker-svc" >> "$GITHUB_ENV"
+              echo "DOCKERFILE=src/matcher/Dockerfile" >> "$GITHUB_ENV"
+              echo "CONTEXT=." >> "$GITHUB_ENV"
+              echo "BUILD_ARGS=" >> "$GITHUB_ENV"
+              echo "BUILD_TARGET=analytics-worker" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "::error::Unsupported service '${{ inputs.service }}'"
+              exit 1
+              ;;
+          esac
+
+      - name: Build Container Image
+        id: build
+        run: |
+          set -euo pipefail
+          args=(
+            --file "$DOCKERFILE"
+            --tag "local/${IMAGE_NAME}:${IMAGE_TAG}"
+            --label "org.opencontainers.image.revision=${{ inputs.commit }}"
+            --label "ewaste.service=${{ inputs.service }}"
+          )
+          if [ -n "$BUILD_TARGET" ]; then
+            args+=(--target "$BUILD_TARGET")
+          fi
+          if [ -n "$BUILD_ARGS" ]; then
+            for arg in $BUILD_ARGS; do
+              args+=(--build-arg "$arg")
+            done
+          fi
+
+          echo "Building local/${IMAGE_NAME}:${IMAGE_TAG} with context: $CONTEXT"
+          docker build "${args[@]}" "$CONTEXT"
+
+          IMAGE_ID=$(docker image inspect --format '{{.Id}}' "local/${IMAGE_NAME}:${IMAGE_TAG}")
+          echo "image_id=$IMAGE_ID" >> "$GITHUB_OUTPUT"
+          echo "Built ${{ inputs.service }} image: local/${IMAGE_NAME}:${IMAGE_TAG} ($IMAGE_ID)"
+
+      # ------------------------------------------------------------------------
+      # Software Bill of Materials (SBOM) Generation via Syft
+      # ------------------------------------------------------------------------
+      - name: Generate SBOM with Syft
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: local/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: spdx-json
+          output-file: sbom-${{ inputs.service }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      # ------------------------------------------------------------------------
+      # Vulnerability Scanning via Grype (Fail on Critical)
+      # ------------------------------------------------------------------------
+      - name: Scan Image with Grype
+        id: grype
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7
+        with:
+          image: local/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          fail-build: true
+          severity-cutoff: critical
+          output-format: sarif
+
+      # ------------------------------------------------------------------------
+      # Retain SBOM and Vulnerability Audit Trail
+      # ------------------------------------------------------------------------
+      - name: Retain SBOM and Scan Report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: security-${{ inputs.environment }}-${{ inputs.service }}-${{ inputs.commit }}
+          path: |
+            sbom-${{ inputs.service }}.spdx.json
+            ${{ steps.grype.outputs.sarif }}
+          if-no-files-found: warn
+          retention-days: 90
+
+      # ------------------------------------------------------------------------
+      # Export Scanned Image for Secure VNet Deployment
+      # ------------------------------------------------------------------------
+      - name: Export Scanned Image
+        run: |
+          set -euo pipefail
+          echo "Exporting verified image to transfer bundle..."
+          docker save "local/${IMAGE_NAME}:${IMAGE_TAG}" | gzip -1 > image.tar.gz
+          ls -lh image.tar.gz
+
+      - name: Hand Image to Deploy Stage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-${{ inputs.service }}-${{ github.run_attempt }}
+          path: image.tar.gz
+          retention-days: 1
+          compression-level: 0
+
+  # ============================================================================
+  # STAGE 3: ISOLATED DEPLOYMENT & VERIFICATION BY IMAGE DIGEST
+  # Runs on VNet-injected self-hosted runner with private ACR access
+  # ============================================================================
+  deploy:
+    name: Deploy (${{ inputs.service }} - ${{ inputs.environment }})
+    needs: [test, build-scan]
+    runs-on: [self-hosted, azure-vnet, "${{ inputs.environment }}"]
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 30
+    if: always() && (inputs.rollback_tag != '' || needs.build-scan.result == 'success')
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.commit }}
+
+      - name: Map Deployment Service Details
+        run: |
+          set -euo pipefail
+          TARGET_ENV="${{ inputs.environment }}"
+          case "${{ inputs.service }}" in
+            ui)
+              echo "IMAGE_NAME=workflow-ui" >> "$GITHUB_ENV"
+              echo "APP_NAME=aca-ewastescalable-${TARGET_ENV}-ui" >> "$GITHUB_ENV"
+              ;;
+            auth)
+              echo "IMAGE_NAME=identity-access-svc" >> "$GITHUB_ENV"
+              echo "APP_NAME=aca-ewastescalable-${TARGET_ENV}-auth" >> "$GITHUB_ENV"
+              ;;
+            api)
+              echo "IMAGE_NAME=batch-workflow-svc" >> "$GITHUB_ENV"
+              echo "APP_NAME=aca-ewastescalable-${TARGET_ENV}-api" >> "$GITHUB_ENV"
+              ;;
+            claim)
+              echo "IMAGE_NAME=claim-logistics-svc" >> "$GITHUB_ENV"
+              echo "APP_NAME=aca-ewastescalable-${TARGET_ENV}-claim" >> "$GITHUB_ENV"
+              ;;
+            custody)
+              echo "IMAGE_NAME=custody-verification-svc" >> "$GITHUB_ENV"
+              echo "APP_NAME=aca-ewastescalable-${TARGET_ENV}-custody" >> "$GITHUB_ENV"
+              ;;
+            matcher)
+              echo "IMAGE_NAME=matching-worker-svc" >> "$GITHUB_ENV"
+              echo "APP_NAME=aca-ewastescalable-${TARGET_ENV}-matcher" >> "$GITHUB_ENV"
+              ;;
+            analytics)
+              echo "IMAGE_NAME=analytics-worker-svc" >> "$GITHUB_ENV"
+              echo "APP_NAME=aca-ewastescalable-${TARGET_ENV}-analytic" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - name: Log in to Azure Container Registry
+        run: |
+          set -euo pipefail
+          ACR_NAME=$(echo "${{ secrets.AZURE_ACR_NAME }}" | cut -d'.' -f1)
+          echo "ACR_NAME=$ACR_NAME" >> "$GITHUB_ENV"
+          echo "ACR_SERVER=${ACR_NAME}.azurecr.io" >> "$GITHUB_ENV"
+
+          echo "Authenticating to ACR via VM Managed Identity..."
+          az login --identity --output none
+          ACR_TOKEN=$(az acr login --name "$ACR_NAME" --expose-token --query accessToken --output tsv)
+          echo "$ACR_TOKEN" | docker login "${ACR_NAME}.azurecr.io" -u 00000000-0000-0000-0000-000000000000 --password-stdin
+
+      - name: Download Scanned Image
+        if: inputs.rollback_tag == ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: image-${{ inputs.service }}-${{ github.run_attempt }}
+
+      - name: Publish Image and Resolve Immutable Digest
+        id: publish
+        run: |
+          set -euo pipefail
+          TARGET_ENV="${{ inputs.environment }}"
+          SHORT_SHA=$(echo "${{ inputs.commit }}" | cut -c1-7)
+          TARGET_TAG="${TARGET_ENV}-${SHORT_SHA}"
+          REPO="${ACR_SERVER}/${IMAGE_NAME}"
+
+          if [ -z "${{ inputs.rollback_tag }}" ]; then
+            echo "Loading scanned image archive..."
+            docker load --input image.tar.gz
+
+            echo "Tagging image for private ACR: ${REPO}:${TARGET_TAG}"
+            docker tag "local/${IMAGE_NAME}:${TARGET_TAG}" "${REPO}:${TARGET_TAG}"
+
+            # Retain legacy image names for seamless migration compatibility
+            if [ "${{ inputs.service }}" = "api" ]; then
+              docker tag "local/${IMAGE_NAME}:${TARGET_TAG}" "${ACR_SERVER}/workflow-api:${TARGET_TAG}"
+              docker push "${ACR_SERVER}/workflow-api:${TARGET_TAG}"
+            fi
+            if [ "${{ inputs.service }}" = "analytics" ]; then
+              docker tag "local/${IMAGE_NAME}:${TARGET_TAG}" "${ACR_SERVER}/workflow-analytics:${TARGET_TAG}"
+              docker push "${ACR_SERVER}/workflow-analytics:${TARGET_TAG}"
+            fi
+
+            echo "Pushing primary image to ACR..."
+            docker push "${REPO}:${TARGET_TAG}"
+
+            DIGEST_REF=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "${REPO}:${TARGET_TAG}" | grep "^${REPO}@sha256:" | head -n1 || true)
+            if [ -z "$DIGEST_REF" ]; then
+              DIGEST_REF=$(docker inspect --format='{{index .RepoDigests 0}}' "${REPO}:${TARGET_TAG}")
+            fi
+            DEPLOYED_TAG="$TARGET_TAG"
+          else
+            RAW_INPUT="${{ inputs.rollback_tag }}"
+            if [ "$(echo "$RAW_INPUT" | tr '[:lower:]' '[:upper:]')" = "PREVIOUS" ]; then
+              echo "Resolving N-1 previous release tag from ACR repository: $IMAGE_NAME..."
+              DEPLOYED_TAG=$(az acr repository show-tags --name "$ACR_NAME" --repository "$IMAGE_NAME" \
+                --orderby time_desc --output tsv 2>/dev/null | grep "^${TARGET_ENV}-" | sed -n '2p' || true)
+            else
+              DEPLOYED_TAG="$RAW_INPUT"
+            fi
+
+            [ -n "$DEPLOYED_TAG" ] || { echo "::error::Could not resolve rollback tag for $IMAGE_NAME"; exit 1; }
+            echo "Rolling back to verified tag: $DEPLOYED_TAG"
+            DIGEST=$(az acr repository show --name "$ACR_NAME" --image "${IMAGE_NAME}:${DEPLOYED_TAG}" --query digest --output tsv 2>/dev/null || true)
+            DIGEST_REF="${DIGEST:+${REPO}@${DIGEST}}"
+          fi
+
+          if [[ "$DIGEST_REF" != "${REPO}@sha256:"* ]]; then
+            echo "::error::Failed to resolve an immutable digest for ${IMAGE_NAME}:${DEPLOYED_TAG}."
+            exit 1
+          fi
+
+          echo "digest=$DIGEST_REF" >> "$GITHUB_OUTPUT"
+          echo "deployed_tag=$DEPLOYED_TAG" >> "$GITHUB_OUTPUT"
+          echo "Immutable release digest: $DIGEST_REF"
+
+      - name: Switch Azure CLI Context to Deployment Service Principal
+        run: |
+          set -euo pipefail
+          SP_APP_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
+          SP_PASS=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)
+          SP_TENANT=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)
+          SP_SUB=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)
+          echo "::add-mask::$SP_PASS"
+          az login --service-principal -u "$SP_APP_ID" -p "$SP_PASS" --tenant "$SP_TENANT" --output none
+          az account set --subscription "$SP_SUB"
+
+      - name: Deploy Image to Azure Container Apps
+        run: |
+          set -euo pipefail
+          DIGEST_REF="${{ steps.publish.outputs.digest }}"
+          RG="${{ inputs.resource_group }}"
+
+          if [ "${{ inputs.service }}" = "analytics" ]; then
+            echo "Invoking matcher and analytics deployment integration script..."
+            export TARGET_ENV="${{ inputs.environment }}"
+            export RG="$RG"
+            export MATCHER_IMAGE="$DIGEST_REF"
+            export MATCHER_SIGNING_SECRET="${{ secrets.MATCHER_SIGNING_SECRET }}"
+            export ANALYTICS_SERVICE_TOKEN="${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}"
+            bash scripts/deploy-matcher.sh
+          else
+            echo "Updating $APP_NAME in $RG with image digest: $DIGEST_REF..."
+            az containerapp update \
+              --name "$APP_NAME" \
+              --resource-group "$RG" \
+              --image "$DIGEST_REF" \
+              --output none
+
+            echo "Awaiting Container App revision health confirmation..."
+            for attempt in $(seq 1 18); do
+              READY_REV=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" \
+                --query 'properties.latestReadyRevisionName' -o tsv 2>/dev/null || echo "")
+              LATEST_REV=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" \
+                --query 'properties.latestRevisionName' -o tsv 2>/dev/null || echo "")
+              if [ -n "$LATEST_REV" ] && [ "$LATEST_REV" = "$READY_REV" ]; then
+                echo "Container App revision $LATEST_REV is healthy and ready."
+                break
+              fi
+              echo "Waiting for revision readiness ($attempt/18)..."
+              sleep 10
+            done
+          fi
+
+      - name: Prune Stale Image Tags in ACR (Keep Last 3)
+        if: inputs.rollback_tag == ''
+        run: |
+          set -euo pipefail
+          TARGET_ENV="${{ inputs.environment }}"
+          OLD_TAGS=$(az acr repository show-tags --name "$ACR_NAME" --repository "$IMAGE_NAME" \
+            --orderby time_desc --output tsv 2>/dev/null | grep "^${TARGET_ENV}-" | tail -n +4 || true)
+          for TAG in $OLD_TAGS; do
+            echo "Pruning older image tag: ${IMAGE_NAME}:${TAG}"
+            az acr repository delete --name "$ACR_NAME" --image "${IMAGE_NAME}:${TAG}" --yes --output none || true
+          done
+
+      - name: Record Release Evidence
+        if: always() && steps.publish.outputs.digest != ''
+        run: |
+          set -euo pipefail
+          DIGEST_REF="${{ steps.publish.outputs.digest }}"
+          DEPLOYED_TAG="${{ steps.publish.outputs.deployed_tag }}"
+          OUTCOME="${{ job.status }}"
+
+          jq -n \
+            --arg service "${{ inputs.service }}" \
+            --arg app "$APP_NAME" \
+            --arg environment "${{ inputs.environment }}" \
+            --arg tag "$DEPLOYED_TAG" \
+            --arg digest "$DIGEST_REF" \
+            --arg commit "${{ inputs.commit }}" \
+            --arg rollback "${{ inputs.rollback_tag }}" \
+            --arg outcome "$OUTCOME" \
+            --arg run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{service:$service, app:$app, environment:$environment, tag:$tag, digest:$digest, commit:$commit, rollback:$rollback, outcome:$outcome, run:$run}' \
+            > "release-${{ inputs.service }}.json"
+
+          {
+            echo "### Deployed Service: \`${{ inputs.service }}\` → \`${APP_NAME}\`"
+            echo "- **Status:** \`${OUTCOME}\`"
+            echo "- **Deployed Tag:** \`${DEPLOYED_TAG}\`"
+            echo "- **Digest:** \`${DIGEST_REF}\`"
+            echo "- **Environment:** \`${{ inputs.environment }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain Release Evidence
+        if: always() && steps.publish.outputs.digest != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ inputs.environment }}-${{ inputs.service }}-${{ inputs.commit }}
+          path: release-${{ inputs.service }}.json
+          retention-days: 90
