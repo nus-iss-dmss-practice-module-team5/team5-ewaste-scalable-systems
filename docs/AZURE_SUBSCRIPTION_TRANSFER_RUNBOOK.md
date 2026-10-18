@@ -17,7 +17,7 @@ This runbook documents the exact, repeatable operational procedure for:
 3. **Registering required Azure Resource Providers**.
 4. **Provisioning the Deployment Service Principal (`gh-actions-ewaste`)** with necessary RBAC roles (`Contributor`, `User Access Administrator`, `AcrPush`, `Key Vault Administrator`).
 5. **Configuring the exact GitHub Repository Secrets** required by the automated CI/CD and IaC pipelines.
-6. **Resolving Global DNS Name Collisions** (e.g., Azure Container Registry `acrewasteplatform.azurecr.io`).
+6. **Resolving Global DNS Name Collisions** (e.g., Azure Container Registry `acrewastescalable.azurecr.io`).
 7. **Troubleshooting Self-Hosted Runner Job Pickup** (`self-hosted`, `azure-vnet`, `dev`).
 8. **Cleanly Deleting and Recreating the Self-Hosted Runner & Managing Orphaned Disks**.
 
@@ -160,7 +160,7 @@ az role assignment create `
 az role assignment create `
   --assignee "<CLIENT_ID_FROM_OUTPUT>" `
   --role "AcrPush" `
-  --scope "/subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/rg-ewaste-shared"
+  --scope "/subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/rg-ewastescalable-shared"
 ```
 
 #### In Bash:
@@ -182,7 +182,7 @@ az role assignment create \
 az role assignment create \
   --assignee "<CLIENT_ID_FROM_OUTPUT>" \
   --role "AcrPush" \
-  --scope "/subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/rg-ewaste-shared"
+  --scope "/subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/rg-ewastescalable-shared"
 ```
 
 ---
@@ -215,15 +215,15 @@ Azure Container Registry (ACR) domain names (`<name>.azurecr.io`) are **globally
 When applying Terraform in `terraform/shared`, you may encounter:
 
 ```
-Error: the name "acrewasteplatform" used for the Container Registry needs to be globally unique and isn't available: The registry acrewasteplatform is already in use.
+Error: the name "acrewastescalable" used for the Container Registry needs to be globally unique and isn't available: The registry acrewastescalable is already in use.
 ```
 
 ### Diagnosis Step:
 
-Run the following command in Azure CLI to determine where `acrewasteplatform` currently resides:
+Run the following command in Azure CLI to determine where `acrewastescalable` currently resides:
 
 ```bash
-az acr show --name acrewasteplatform --query "id" -o tsv
+az acr show --name acrewastescalable --query "id" -o tsv
 ```
 
 ### Resolution Paths:
@@ -238,13 +238,13 @@ _(This happens if the resource was already deployed previously, but you are init
 cd terraform/shared
 
 # 1. Import the Shared Resource Group
-terraform import azurerm_resource_group.shared /subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/rg-ewaste-shared
+terraform import azurerm_resource_group.shared /subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/rg-ewastescalable-shared
 
 # 2. Import the Container Registry
-terraform import azurerm_container_registry.acr /subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/rg-ewaste-shared/providers/Microsoft.ContainerRegistry/registries/acrewasteplatform
+terraform import azurerm_container_registry.acr /subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/rg-ewastescalable-shared/providers/Microsoft.ContainerRegistry/registries/acrewastescalable
 
 # 3. Import the Centralized Log Analytics Workspace (if already created)
-terraform import azurerm_log_analytics_workspace.logs /subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/rg-ewaste-shared/providers/Microsoft.OperationalInsights/workspaces/log-ewaste-centralized
+terraform import azurerm_log_analytics_workspace.logs /subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/rg-ewastescalable-shared/providers/Microsoft.OperationalInsights/workspaces/log-ewastescalable-centralized
 ```
 
 Then run `terraform plan` and `terraform apply`. Terraform will now manage the existing registry instead of trying to create a duplicate.
@@ -253,11 +253,11 @@ Then run `terraform plan` and `terraform apply`. Terraform will now manage the e
 
 #### Scenario B: The registry still exists in the OLD subscription / account
 
-_(If moving to a completely new subscription and the old subscription still holds `acrewasteplatform`)._
-Azure holds the global DNS record for `acrewasteplatform.azurecr.io`. Two choices:
+_(If moving to a completely new subscription and the old subscription still holds `acrewastescalable`)._
+Azure holds the global DNS record for `acrewastescalable.azurecr.io`. Two choices:
 
-1. **Option 1 (Clean Deletion from Old Subscription):** Log into the old account/subscription and delete `acrewasteplatform` (or delete `rg-ewaste-shared`). Once released by Azure (usually within 1–2 minutes), rerun `terraform apply` in the new subscription.
-2. **Option 2 (Use an Appended Suffix Name):** If the old subscription cannot be modified or deleted, update the ACR name to a new globally unique identifier (e.g., `acrewasteplatform01` or `acrewaste<unique_suffix>`) in `terraform/shared/main.tf` and the corresponding `shared_acr_name` variable in `terraform/environments/environments/*.tfvars`.
+1. **Option 1 (Clean Deletion from Old Subscription):** Log into the old account/subscription and delete `acrewastescalable` (or delete `rg-ewastescalable-shared`). Once released by Azure (usually within 1–2 minutes), rerun `terraform apply` in the new subscription.
+2. **Option 2 (Use an Appended Suffix Name):** If the old subscription cannot be modified or deleted, update the ACR name to a new globally unique identifier (e.g., `acrewastescalable01` or `acrewaste<unique_suffix>`) in `terraform/shared/main.tf` and the corresponding `shared_acr_name` variable in `terraform/environments/environments/*.tfvars`.
 
 ---
 
@@ -272,7 +272,7 @@ Waiting for a runner to pick up this job...
 
 ### Why This Happens:
 
-MySQL Flexible Server in Dev (`mysql-ewaste-dev`) is private within `vnet-ewaste-dev`. Public access is blocked. Therefore, Liquibase cannot run on GitHub's hosted `ubuntu-latest` runners. It requires the VNet-injected Linux VM runner (`vm-runner-ewaste-dev`) that carries the three labels:
+MySQL Flexible Server in Dev (`mysql-ewastescalable-dev`) is private within `vnet-ewastescalable-dev`. Public access is blocked. Therefore, Liquibase cannot run on GitHub's hosted `ubuntu-latest` runners. It requires the VNet-injected Linux VM runner (`vm-runner-ewastescalable-dev`) that carries the three labels:
 
 - `self-hosted`
 - `azure-vnet`
@@ -288,62 +288,76 @@ This resets the existing Azure VM runner in-place without deleting cloud infrast
 
 1. **Remove Old Runner from GitHub**:
    - Go to GitHub Repository $\rightarrow$ **Settings** $\rightarrow$ **Actions** $\rightarrow$ **Runners**.
-   - If `runner-ewaste-dev` is present, click on it and select **Remove** (or Force Remove).
+   - If `runner-ewastescalable` is present, click on it and select **Remove** (or Force Remove).
 2. **Execute In-Place Wipe and Fresh Registration**:
-   - Open Azure Portal $\rightarrow$ Virtual Machines $\rightarrow$ **`vm-runner-ewaste-dev`**.
+   - Open Azure Portal $\rightarrow$ Virtual Machines $\rightarrow$ **`vm-runner-ewastescalable-dev`**.
    - Under **Operations**, select **Run command** $\rightarrow$ **`RunShellScript`**.
    - Paste the following script and click **Run**:
 
 ```bash
 #!/bin/bash
 exec 2>&1
-set -x
+set -e
 
-REPO="nus-iss-dmss-practice-module-team5/team5-ewaste-platform"
+REPO="nus-iss-dmss-practice-module-team5/team5-ewaste-scalable-systems"
 RUNNER_DIR="/home/runner/actions-runner"
+RUNNER_NAME="runner-ewastescalable"
 RUNNER_VER="2.329.0"
 
-# 1. Stop and uninstall any existing runner service
-if [ -f "$RUNNER_DIR/svc.sh" ]; then
-  cd "$RUNNER_DIR"
-  ./svc.sh stop || true
-  ./svc.sh uninstall || true
-fi
+echo "=== 1. Stopping and cleaning up any existing runner systemd services ==="
+systemctl stop actions.runner.* 2>/dev/null || true
+systemctl disable actions.runner.* 2>/dev/null || true
+rm -f /etc/systemd/system/actions.runner.* 2>/dev/null || true
+systemctl daemon-reload
 
-# 2. Wipe directory and download clean runner v2.329.0
+echo "=== 2. Completely wiping runner directory (including hidden files) ==="
+rm -rf "$RUNNER_DIR"
 mkdir -p "$RUNNER_DIR"
-cd "$RUNNER_DIR"
-rm -rf "$RUNNER_DIR"/*
-curl -sL -o "actions-runner-linux-x64-${RUNNER_VER}.tar.gz" "https://github.com/actions/runner/releases/download/v${RUNNER_VER}/actions-runner-linux-x64-${RUNNER_VER}.tar.gz"
-tar -xzf "actions-runner-linux-x64-${RUNNER_VER}.tar.gz"
 chown -R runner:runner /home/runner
 
-# 3. Extract PAT from cloud-init user-data
+echo "=== 3. Extracting PAT and obtaining GitHub registration token ==="
+# Read PAT securely without logging to stdout
+set +x
 PAT=$(grep -oP 'Authorization: token \K[^"]+' /var/lib/cloud/instance/user-data.txt 2>/dev/null | head -n 1)
+
 if [ -z "$PAT" ]; then
   echo "ERROR: PAT not found in user-data.txt"
   exit 1
 fi
 
-# 4. Request a fresh registration token from GitHub API
 REG_TOKEN=$(curl -sX POST -H "Accept: application/vnd.github.v3+json" \
   -H "Authorization: token $PAT" \
   "https://api.github.com/repos/${REPO}/actions/runners/registration-token" | jq -r .token)
+set -x
 
 if [ -z "$REG_TOKEN" ] || [ "$REG_TOKEN" == "null" ]; then
   echo "ERROR: Failed to retrieve registration token from GitHub API"
   exit 1
 fi
 
-# 5. Configure runner with required labels
-su - runner -c "$RUNNER_DIR/config.sh --url https://github.com/${REPO} --token $REG_TOKEN --name runner-ewaste-dev --labels self-hosted,azure-vnet,dev --unattended --replace"
+echo "=== 4. Downloading and unpacking Actions Runner v${RUNNER_VER} ==="
+cd "$RUNNER_DIR"
+curl -sL -o "actions-runner-linux-x64-${RUNNER_VER}.tar.gz" "https://github.com/actions/runner/releases/download/v${RUNNER_VER}/actions-runner-linux-x64-${RUNNER_VER}.tar.gz"
+tar -xzf "actions-runner-linux-x64-${RUNNER_VER}.tar.gz"
+rm -f "actions-runner-linux-x64-${RUNNER_VER}.tar.gz"
+chown -R runner:runner /home/runner
 
-# 6. Install and start the systemd service
+echo "=== 5. Registering runner as ${RUNNER_NAME} with labels (dev, stg, prod) ==="
+su - runner -c "$RUNNER_DIR/config.sh \
+  --url https://github.com/${REPO} \
+  --token $REG_TOKEN \
+  --name ${RUNNER_NAME} \
+  --labels self-hosted,azure-vnet,dev,stg,prod \
+  --unattended \
+  --replace"
+
+echo "=== 6. Installing and starting systemd service ==="
 cd "$RUNNER_DIR"
 ./svc.sh install runner
 ./svc.sh start
 ./svc.sh status
-echo "SUCCESS: Runner 2.329.0 registered and active!"
+
+echo "SUCCESS: Runner ${RUNNER_NAME} is active with labels [self-hosted, azure-vnet, dev, stg, prod]!"
 ```
 
 ---
@@ -353,16 +367,16 @@ echo "SUCCESS: Runner 2.329.0 registered and active!"
 To perform an absolute clean rebuild of the VM from bare metal:
 
 1. **Remove Old Runner from GitHub**:
-   - Go to GitHub Repository $\rightarrow$ **Settings** $\rightarrow$ **Actions** $\rightarrow$ **Runners** $\rightarrow$ Click `runner-ewaste-dev` $\rightarrow$ Click **Remove**.
+   - Go to GitHub Repository $\rightarrow$ **Settings** $\rightarrow$ **Actions** $\rightarrow$ **Runners** $\rightarrow$ Click `runner-ewastescalable` $\rightarrow$ Click **Remove**.
 2. **Delete the VM in Azure (Including Its Disks)**:
    ```bash
    # Deletes the VM and automatically deletes its OS disk
-   az vm delete --resource-group rg-ewaste-dev --name vm-runner-ewaste-dev --yes
+   az vm delete --resource-group rg-ewastescalable-dev --name vm-runner-ewastescalable-dev --yes
    ```
 3. **Trigger Terraform Pipeline**:
    - In GitHub Actions, trigger **Terraform - Multi-Environment Provisioning Pipeline** (`dev`).
    - Terraform detects `azurerm_linux_virtual_machine.runner[0]` is missing.
-   - Terraform provisions a fresh VM and executes the updated `scripts/runner-init.sh` (which installs runner `>= 2.329.0`), automatically registering `runner-ewaste-dev` with the required labels.
+   - Terraform provisions a fresh VM and executes the updated `scripts/runner-init.sh` (which installs runner `>= 2.329.0`), automatically registering `runner-ewastescalable` with the required labels.
 
 ---
 
@@ -371,7 +385,7 @@ To perform an absolute clean rebuild of the VM from bare metal:
 In Azure, when a VM is created via Terraform without a hardcoded `name` in `os_disk {}`, Azure auto-generates a managed disk name following the pattern:
 
 ```text
-vm-runner-ewaste-dev_OsDisk_1_<32_random_hex_characters>
+vm-runner-ewastescalable-dev_OsDisk_1_<32_random_hex_characters>
 ```
 
 When a VM is deleted without specifying disk deletion flags, the old OS disk remains in Azure as an **`Unattached`** managed disk, incurring idle storage charges.
@@ -382,15 +396,15 @@ When a VM is deleted without specifying disk deletion flags, the old OS disk rem
 
 ```bash
 # 1. Identify which disk is actively attached to the running VM
-ACTIVE_DISK=$(az vm show --resource-group rg-ewaste-dev --name vm-runner-ewaste-dev --query "storageProfile.osDisk.name" -o tsv)
+ACTIVE_DISK=$(az vm show --resource-group rg-ewastescalable-dev --name vm-runner-ewastescalable-dev --query "storageProfile.osDisk.name" -o tsv)
 echo "Active disk in use: $ACTIVE_DISK"
 
 # 2. Automatically find and delete all unattached (orphaned) disks in the resource group
-ORPHANED_DISKS=$(az disk list --resource-group rg-ewaste-dev --query "[?managedBy==null].name" -o tsv)
+ORPHANED_DISKS=$(az disk list --resource-group rg-ewastescalable-dev --query "[?managedBy==null].name" -o tsv)
 
 for DISK in $ORPHANED_DISKS; do
   echo "Deleting orphaned unattached disk: $DISK"
-  az disk delete --resource-group rg-ewaste-dev --name "$DISK" --yes --no-wait
+  az disk delete --resource-group rg-ewastescalable-dev --name "$DISK" --yes --no-wait
 done
 ```
 
@@ -398,14 +412,14 @@ done
 
 ```powershell
 # 1. Identify active disk
-$ActiveDisk = az vm show --resource-group rg-ewaste-dev --name vm-runner-ewaste-dev --query "storageProfile.osDisk.name" -o tsv
+$ActiveDisk = az vm show --resource-group rg-ewastescalable-dev --name vm-runner-ewastescalable-dev --query "storageProfile.osDisk.name" -o tsv
 Write-Host "Active disk in use: $ActiveDisk"
 
 # 2. Find and delete unattached disks
-$OrphanedDisks = az disk list --resource-group rg-ewaste-dev --query "[?managedBy==null].name" -o tsv
+$OrphanedDisks = az disk list --resource-group rg-ewastescalable-dev --query "[?managedBy==null].name" -o tsv
 foreach ($disk in $OrphanedDisks) {
     Write-Host "Deleting orphaned unattached disk: $disk"
-    az disk delete --resource-group rg-ewaste-dev --name $disk --yes --no-wait
+    az disk delete --resource-group rg-ewastescalable-dev --name $disk --yes --no-wait
 }
 ```
 
@@ -417,10 +431,10 @@ Once the secrets are saved in GitHub, the runner VM is online, and state is reco
 
 1. **Verify GitHub Runner Status**:
    - Go to GitHub Repo $\rightarrow$ **Settings** $\rightarrow$ **Actions** $\rightarrow$ **Runners**.
-   - Verify `runner-ewaste-dev` is listed with a green **Idle** badge and tags `self-hosted`, `azure-vnet`, `dev`.
+   - Verify `runner-ewastescalable` is listed with a green **Idle** badge and tags `self-hosted`, `azure-vnet`, `dev`, `stg`, `prod`.
 2. **Trigger Database Migration**:
    - Trigger **Database - Liquibase Migration** workflow (`dev`).
-   - The runner inside `vnet-ewaste-dev` immediately picks up the job, resolves `mysql-ewaste-dev.ewaste-dev.mysql.database.azure.com:3306`, and executes the changelog migrations without network timeout.
+   - The runner inside `vnet-ewastescalable-dev` immediately picks up the job, resolves `mysql-ewastescalable-dev.mysql.database.azure.com:3306`, and executes the changelog migrations without network timeout.
 3. **Trigger CD Pipeline**:
    - Trigger **CD - Multi-Environment Deployment & Evidence Pipeline** (`dev`).
    - Confirm ACR image build/pull and successful rolling update of Container Apps.
