@@ -10,8 +10,10 @@ on:
     branches: [dev, main]
     paths:
       - 'src/**'
-      - '.github/workflows/cd-pipeline.yml'
-      - '.github/workflows/service-pipeline.yml'
+      - 'contracts/**'
+      - 'scripts/**'
+      - 'terraform/**'
+      - '.github/workflows/**'
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
@@ -579,6 +581,30 @@ jobs:
             exit 1
           fi
           echo "Login smoke test passed."
+
+          # A login can succeed while other services reject the JWT issuer.
+          # The smoke account must be a DONOR or COLLECTOR for this read.
+          ACCESS_TOKEN=$(jq -r '.access_token' "$RESPONSE_FILE")
+          echo "::add-mask::$ACCESS_TOKEN"
+          READ_URL="https://${UI_FQDN}/api/v1/batches?page_size=1"
+          CORRELATION_ID="smoke-read-${TARGET_ENV}-$(date +%s)"
+          if ! HTTP_STATUS=$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output "$RESPONSE_FILE" --write-out '%{http_code}' "$READ_URL" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "X-Correlation-ID: $CORRELATION_ID"); then
+            echo "::error::Authenticated API smoke test could not reach the batch service (correlation ID: $CORRELATION_ID)."
+            exit 1
+          fi
+          echo "Authenticated API HTTP Response Status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Authenticated API smoke test expected HTTP 200, received $HTTP_STATUS (correlation ID: $CORRELATION_ID)."
+            exit 1
+          fi
+          if ! jq -e '.data | type == "array"' "$RESPONSE_FILE" > /dev/null 2>&1; then
+            echo "::error::Authenticated API returned HTTP 200 without a valid batch list."
+            exit 1
+          fi
+          echo "Authenticated API smoke test passed."
 
       # ------------------------------------------------------------------------
       # 3.2 FRONTEND UI ACCESSIBILITY SMOKE TEST
