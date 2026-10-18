@@ -147,6 +147,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       image_id: ${{ steps.build.outputs.image_id }}
+      archive_sha256: ${{ steps.export.outputs.archive_sha256 }}
     steps:
       - name: Checkout Code Repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -212,6 +213,7 @@ jobs:
           retention-days: 90
 
       - name: Export Scanned Image for Deployment
+        id: export
         env:
           IMAGE: ${{ fromJSON(inputs.service).image }}
           IMAGE_TAG: ${{ inputs.image_tag }}
@@ -219,6 +221,10 @@ jobs:
           set -euo pipefail
           docker save "local/${IMAGE}:${IMAGE_TAG}" | gzip -1 > image.tar.gz
           ls -lh image.tar.gz
+          # Deploy verifies these bytes. An image ID cannot be compared across
+          # runners: the self-hosted runner's containerd image store reports a
+          # manifest digest where this runner reports the config digest.
+          echo "archive_sha256=$(sha256sum image.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Hand Image to Deploy Stage
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -286,18 +292,18 @@ jobs:
       - name: Publish Image and Resolve Digest
         id: publish
         env:
-          SCANNED_IMAGE_ID: ${{ needs.build-scan.outputs.image_id }}
+          SCANNED_ARCHIVE_SHA256: ${{ needs.build-scan.outputs.archive_sha256 }}
         run: |
           set -euo pipefail
           REPO="${ACR_SERVER}/${IMAGE}"
 
           if [ -z "$ROLLBACK_TAG" ]; then
-            docker load --input image.tar.gz
-            LOADED_ID=$(docker image inspect --format '{{.Id}}' "local/${IMAGE}:${IMAGE_TAG}")
-            if [ "$LOADED_ID" != "$SCANNED_IMAGE_ID" ]; then
-              echo "::error::Image ID $LOADED_ID does not match the scanned image $SCANNED_IMAGE_ID."
+            ARCHIVE_SHA256=$(sha256sum image.tar.gz | cut -d' ' -f1)
+            if [ -z "$SCANNED_ARCHIVE_SHA256" ] || [ "$ARCHIVE_SHA256" != "$SCANNED_ARCHIVE_SHA256" ]; then
+              echo "::error::Image archive sha256 $ARCHIVE_SHA256 does not match the scanned archive ${SCANNED_ARCHIVE_SHA256:-<missing>}."
               exit 1
             fi
+            docker load --input image.tar.gz
             docker tag "local/${IMAGE}:${IMAGE_TAG}" "${REPO}:${IMAGE_TAG}"
             docker push "${REPO}:${IMAGE_TAG}"
             DIGEST_REF=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${REPO}:${IMAGE_TAG}" | grep "^${REPO}@sha256:" | head -n1 || true)

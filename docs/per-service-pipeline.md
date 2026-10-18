@@ -24,7 +24,7 @@ resolves the target environment:
    - **Test**: only that service's stack (Go, Python or Node).
    - **Build & Scan**: builds the image, generates an SPDX SBOM with Syft and
      scans it with Grype (fails on critical). Both reports are kept for 90 days.
-   - **Deploy**: loads the scanned image, checks its image ID, pushes it to
+   - **Deploy**: checks the SHA-256 of the scanned image archive, loads it, pushes it to
      ACR and updates only that service's container app by `@sha256` digest. It
      then waits until the new revision is ready on that digest and keeps a
      release record (service, tag, digest, commit, reason) for 90 days.
