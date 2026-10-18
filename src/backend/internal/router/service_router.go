@@ -34,6 +34,7 @@ const (
 // without adding an Identity service call on the request path.
 type ServiceDependencies struct {
 	AuthController         *controller.AuthController
+	RegistrationController *controller.RegistrationController
 	BatchController        *controller.BatchController
 	EvidenceController     *controller.EvidenceController
 	ClaimController        *controller.ClaimController
@@ -120,6 +121,23 @@ func registerIdentityRoutes(r *gin.Engine, deps ServiceDependencies) {
 	auth.POST("/login", middleware.RateLimit(deps.Limiter), deps.AuthController.Login)
 	auth.POST("/refresh", middleware.RateLimit(deps.Limiter), deps.AuthController.Refresh)
 	auth.POST("/logout", middleware.RequireAccessTokens(deps.Tokens, deps.AuthRepository), deps.AuthController.Logout)
+	RegisterRegistrationRoutes(auth, deps.RegistrationController, deps.Tokens, deps.AuthRepository, deps.Limiter)
+}
+
+// RegisterRegistrationRoutes attaches self-registration and the Administrator
+// review queue to an auth group. identity-access and the local monolith share
+// it so both expose the same contract under their own prefix.
+func RegisterRegistrationRoutes(auth *gin.RouterGroup, registration *controller.RegistrationController, tokens *token.Service, repo repository.AuthRepository, limiter ratelimit.Limiter) {
+	if registration == nil {
+		return
+	}
+	auth.POST("/register", middleware.RateLimit(limiter), registration.Register)
+
+	review := auth.Group("/registrations")
+	review.Use(middleware.RequireAccessTokens(tokens, repo), middleware.RequireRole("SYSTEM_ADMIN"))
+	review.GET("", registration.ListPending)
+	review.POST("/:user_id/approve", registration.Approve)
+	review.POST("/:user_id/reject", registration.Reject)
 }
 
 func registerBatchWorkflowRoutes(r *gin.Engine, deps ServiceDependencies) {
