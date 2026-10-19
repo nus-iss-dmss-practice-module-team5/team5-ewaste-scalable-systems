@@ -38,22 +38,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  resilience:
-    name: EWSS-32 Resilience (${{ inputs.target_env || 'prod' }})
+  # The self-hosted runner has no gh CLI, so check for active runs on a hosted runner.
+  guard:
+    name: Refuse to Run During a Deployment
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[run-ewss-32]')
-    # MySQL is private, so the SQL checks must run inside the VNet.
-    runs-on: [self-hosted, azure-vnet, "${{ inputs.target_env || 'prod' }}"]
-    environment: ${{ inputs.target_env || 'prod' }}
-    timeout-minutes: 45
-    env:
-      TARGET_ENV: ${{ inputs.target_env || 'prod' }}
-      RESOURCE_GROUP: rg-ewastescalable-${{ inputs.target_env || 'prod' }}
-      CASES: ${{ inputs.cases || 'RS-10,RS-04,RS-01,RS-08' }}
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code Repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Refuse to Run During a Deployment
+      - name: Check for Active Deployments
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -69,6 +60,21 @@ jobs:
             fi
           done
           echo "No deployment, migration or Terraform run is active."
+
+  resilience:
+    name: EWSS-32 Resilience (${{ inputs.target_env || 'prod' }})
+    needs: [guard]
+    # MySQL is private, so the SQL checks must run inside the VNet.
+    runs-on: [self-hosted, azure-vnet, "${{ inputs.target_env || 'prod' }}"]
+    environment: ${{ inputs.target_env || 'prod' }}
+    timeout-minutes: 45
+    env:
+      TARGET_ENV: ${{ inputs.target_env || 'prod' }}
+      RESOURCE_GROUP: rg-ewastescalable-${{ inputs.target_env || 'prod' }}
+      CASES: ${{ inputs.cases || 'RS-10,RS-04,RS-01,RS-08' }}
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Authenticate to Microsoft Azure
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
