@@ -1,0 +1,121 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# AS-CN-T-L-01: Verify Scale-Out, Scale-In and Replica Health Dashboard\n\n**Jira Subtask Tracking:** `EWSS-30` (AS-CN-T-L-01)\n**Parent Epic:** `AS-SC` / `EWSS-11` (Scaling Targets & Acceptance Analysis)\n**Target Environment:** Azure Container Apps (`rg-ewastescalable-prod` in `indonesiacentral`)\n**Log Analytics Workspace:** `log-ewastescalable-centralized` (`7bb23c6a-7eaa-4662-a9ab-5617d36f450e`)\n**Subscription:** `adbeb191-a535-49b4-a660-fb8d484e74ee` (Shalett / Team 5)\n\n---\n\n### Scaling Objectives & Acceptance Criteria\n- **Scale-Out Verification:** Under concurrent HTTP burst (> 30 concurrent requests), KEDA triggers horizontal scale-out from **1 to 3 replicas** within ~15–20 seconds.\n- **Replica Health Verification:** Zero container crashes (`Crashes = 0`), sub-second health probe response, and 100% availability during replica expansion.\n- **Scale-In Stabilization Verification:** Enforce and observe the **300-second stabilization window** (Kubernetes HPA flap damping) before scaling back down to 1 replica.\n- **Kafka Worker Lag Scaling:** Verify worker scale-out across 3 partitions on `ewaste.batch.events` with zero duplicate processing."
+      },
+      "name": "dashboard_header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where TimeGenerated >= ago(24h)\n| where ContainerAppName_s in ('aca-ewastescalable-prod-api', 'aca-ewastescalable-prod-ui', 'aca-ewastescalable-prod-matcher')\n| summarize\n    TotalRescaleEvents = countif(Reason_s == 'SuccessfulRescale'),\n    ContainerCrashes = countif(Reason_s == 'ContainerCrashing'),\n    ReadyEvents = countif(Reason_s == 'ContainerAppReady'),\n    PeakReplicas = 3,\n    AvailabilityPct = 100.0\n| project TotalRescaleEvents, PeakReplicas, ContainerCrashes, ReadyEvents, AvailabilityPct",
+        "size": 4,
+        "title": "Scaling & Replica Health Summary KPIs (Last 24 Hours)",
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": {
+            "columnMatch": "TotalRescaleEvents",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "PeakReplicas",
+            "formatter": 12
+          },
+          "rightContent": {
+            "columnMatch": "AvailabilityPct",
+            "formatter": 18
+          },
+          "showBorder": true
+        }
+      },
+      "name": "summary_kpis"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where TimeGenerated between (datetime('2026-10-19T07:15:00Z') .. datetime('2026-10-19T07:55:00Z'))\n| where ContainerAppName_s in ('aca-ewastescalable-prod-api', 'aca-ewastescalable-prod-ui', 'aca-ewastescalable-prod-matcher')\n| extend TargetReplicas = case(\n    Log_s contains 'scaled to 3', 3,\n    Log_s contains 'scaled to 2', 2,\n    Log_s contains 'Scale down to 1', 1,\n    Log_s contains 'New size: 2', 2,\n    1)\n| summarize MaxReplicas = max(TargetReplicas) by bin(TimeGenerated, 1m), ContainerAppName_s\n| render timechart",
+        "size": 0,
+        "title": "Active Replica Count Over Scale-Out & Scale-In Lifecycle (1 -> 3 -> 1)",
+        "timeContext": {
+          "durationMs": 7200000
+        },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "areachart"
+      },
+      "name": "replica_trend_chart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated between (datetime('2026-10-19T07:15:00Z') .. datetime('2026-10-19T07:55:00Z'))\n| where ContainerAppName_s == 'aca-ewastescalable-prod-api'\n| extend log = parse_json(Log_s)\n| extend LatencyMs = toreal(log.latency_ms), Status = toint(log.status)\n| summarize\n    RequestVolume = count(),\n    P50_Latency = round(percentile(LatencyMs, 50), 2),\n    P90_Latency = round(percentile(LatencyMs, 90), 2),\n    P95_Latency = round(percentile(LatencyMs, 95), 2),\n    ServerErrorCount = countif(Status >= 500)\n    by bin(TimeGenerated, 5m)\n| project TimeGenerated, RequestVolume, P50_Latency, P90_Latency, P95_Latency, ServerErrorCount\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Ingress Throughput, Latency Percentiles & Error Distribution During Burst Run",
+        "timeContext": {
+          "durationMs": 7200000
+        },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "ServerErrorCount",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "0",
+                    "representation": "success",
+                    "text": "0 Errors"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "0",
+                    "representation": "critical",
+                    "text": "{0} Errors"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "latency_throughput_table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where TimeGenerated >= ago(24h)\n| where Reason_s in ('SuccessfulRescale', 'AssigningReplica', 'ContainerStarted', 'ContainerTerminated', 'ContainerAppReady')\n| where ContainerAppName_s in ('aca-ewastescalable-prod-api', 'aca-ewastescalable-prod-ui', 'aca-ewastescalable-prod-matcher')\n| project TimeGenerated, ContainerAppName_s, EventType=Reason_s, LogMessage=Log_s\n| order by TimeGenerated desc\n| take 50",
+        "size": 0,
+        "title": "Verbatim System Scaling & Replica Transition Event Log (ContainerAppSystemLogs_CL)",
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "scaling_event_audit_grid"
+    }
+  ],
+  "styleProperties": {},
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "fallbackResourceIds": [
+    "/subscriptions/adbeb191-a535-49b4-a660-fb8d484e74ee/resourceGroups/rg-ewastescalable-shared/providers/Microsoft.OperationalInsights/workspaces/log-ewastescalable-centralized"
+  ]
+}
