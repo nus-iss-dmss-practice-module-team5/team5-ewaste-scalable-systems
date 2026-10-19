@@ -116,11 +116,6 @@ variable "batch_max_replicas" {
   description = "Maximum replicas for batch-workflow-svc (lock to 1 for R1 capacity screen)."
 }
 
-variable "scale_cooldown_period_in_seconds" {
-  type        = number
-  default     = 30
-  description = "Cooldown period in seconds before scaling down replicas (defaults to 30s for rapid demo/testing scale-in)."
-}
 
 variable "auth_access_secret" {
   type        = string

@@ -880,7 +880,7 @@ resource "azurerm_container_app" "api" {
 
       env {
         name  = "EWASTE_KAFKA_BATCH_SIZE"
-        value = "1"
+        value = "50"
       }
 
       env {
@@ -2051,35 +2051,4 @@ resource "azurerm_container_app" "analytics" {
     azurerm_eventhub_namespace_authorization_rule.app_auth,
     azurerm_container_app.api
   ]
-}
-
-# ============================================================================
-# 11. SCALE-DOWN COOLDOWN CONFIGURATION (RAPID SCALE-IN FOR DEMO & TESTING)
-# ============================================================================
-
-resource "azapi_resource_action" "scale_cooldown" {
-  for_each = {
-    api             = azurerm_container_app.api.id
-    ui              = azurerm_container_app.ui.id
-    claim           = azurerm_container_app.claim.id
-    custody         = azurerm_container_app.custody.id
-    auth            = azurerm_container_app.auth.id
-    matching_worker = azurerm_container_app.matching_worker.id
-    analytics       = azurerm_container_app.analytics.id
-  }
-
-  type        = "Microsoft.App/containerApps@2024-03-01"
-  resource_id = each.value
-  method      = "PATCH"
-
-  body = {
-    properties = {
-      template = {
-        scale = {
-          cooldownPeriod  = var.scale_cooldown_period_in_seconds
-          pollingInterval = 10
-        }
-      }
-    }
-  }
 }
