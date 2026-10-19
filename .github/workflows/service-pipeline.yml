@@ -537,6 +537,7 @@ jobs:
             --output none
 
           echo "Awaiting Container App revision health confirmation..."
+          IS_READY=0
           for attempt in $(seq 1 18); do
             READY_REV=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" \
               --query 'properties.latestReadyRevisionName' -o tsv 2>/dev/null || echo "")
@@ -544,11 +545,17 @@ jobs:
               --query 'properties.latestRevisionName' -o tsv 2>/dev/null || echo "")
             if [ -n "$LATEST_REV" ] && [ "$LATEST_REV" = "$READY_REV" ]; then
               echo "Container App revision $LATEST_REV is healthy and ready."
+              IS_READY=1
               break
             fi
             echo "Waiting for revision readiness ($attempt/18)..."
             sleep 10
           done
+
+          if [ "$IS_READY" -ne 1 ]; then
+            echo "::error::Container App revision ${LATEST_REV:-unknown} failed to achieve healthy ready state within 180s (latest ready: ${READY_REV:-none})."
+            exit 1
+          fi
 
       - name: Prune Stale Image Tags in ACR (Keep Last 3)
         if: inputs.rollback_tag == ''
