@@ -27,12 +27,24 @@ export type AssignmentCurrentState = {
   currentAssignmentId?: string;
 };
 
+/**
+ * Field-level reason sent with a 422 VALIDATION_ERROR (`details` in the error
+ * body). For a pickup time it carries the interval the server accepts.
+ */
+export type ValidationDetails = {
+  field: string;
+  reason: string;
+  earliestAllowed?: string;
+  latestAllowed?: string;
+};
+
 export class WorkflowError extends Error {
   readonly kind: WorkflowErrorKind;
   readonly code: string;
   readonly correlationId: string;
   readonly status?: number;
   readonly currentState?: AssignmentCurrentState;
+  readonly validation?: ValidationDetails;
 
   constructor(
     message: string,
@@ -41,6 +53,7 @@ export class WorkflowError extends Error {
     correlationId: string,
     status?: number,
     currentState?: AssignmentCurrentState,
+    validation?: ValidationDetails,
   ) {
     super(message);
     this.name = "WorkflowError";
@@ -49,6 +62,7 @@ export class WorkflowError extends Error {
     this.correlationId = correlationId;
     this.status = status;
     this.currentState = currentState;
+    this.validation = validation;
   }
 }
 
@@ -120,11 +134,60 @@ function readCurrentState(value: unknown): AssignmentCurrentState | undefined {
   return state;
 }
 
+/** `details` from an error body; undefined unless field and reason are set. */
+function readValidationDetails(value: unknown): ValidationDetails | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const { field, reason, earliest_allowed, latest_allowed } = value;
+  if (typeof field !== "string" || typeof reason !== "string") {
+    return undefined;
+  }
+  const details: ValidationDetails = { field, reason };
+  if (typeof earliest_allowed === "string" && earliest_allowed !== "") {
+    details.earliestAllowed = earliest_allowed;
+  }
+  if (typeof latest_allowed === "string" && latest_allowed !== "") {
+    details.latestAllowed = latest_allowed;
+  }
+  return details;
+}
+
+function localTime(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
+}
+
+/**
+ * Message for a refused pickup time, naming the allowed interval. It is also
+ * what a rejected offline draft shows, so it must make sense on its own.
+ */
+export function pickupTimeMessage(details: ValidationDetails): string | null {
+  if (details.field !== "pickup_occurred_at") {
+    return null;
+  }
+  const earliest = details.earliestAllowed
+    ? localTime(details.earliestAllowed)
+    : null;
+  if (details.reason === "PICKUP_TIME_BEFORE_ASSIGNMENT") {
+    return earliest
+      ? `Pickup time is before this assignment was made. Choose a time from ${earliest} to now.`
+      : "Pickup time is before this assignment was made.";
+  }
+  if (details.reason === "PICKUP_TIME_IN_FUTURE") {
+    return details.latestAllowed
+      ? `Pickup time is in the future. Choose a time no later than ${localTime(details.latestAllowed)}.`
+      : "Pickup time is in the future.";
+  }
+  return "Pickup time is not allowed.";
+}
+
 function readErrorBody(data: unknown): {
   code: string;
   message: string;
   correlationId: string;
   currentState?: AssignmentCurrentState;
+  validation?: ValidationDetails;
 } {
   if (!isRecord(data)) {
     return {
@@ -141,9 +204,14 @@ function readErrorBody(data: unknown): {
       ? data.correlation_id
       : "corr-unknown";
   const currentState = readCurrentState(data.current_state);
-  return currentState
-    ? { code, message, correlationId, currentState }
-    : { code, message, correlationId };
+  const validation = readValidationDetails(data.details);
+  return {
+    code,
+    message: (validation && pickupTimeMessage(validation)) || message,
+    correlationId,
+    ...(currentState ? { currentState } : {}),
+    ...(validation ? { validation } : {}),
+  };
 }
 
 export function toWorkflowError(error: unknown): WorkflowError {
@@ -167,6 +235,7 @@ export function toWorkflowError(error: unknown): WorkflowError {
       body.correlationId,
       error.response.status,
       body.currentState,
+      body.validation,
     );
   }
   return new WorkflowError(

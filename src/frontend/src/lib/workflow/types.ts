@@ -66,6 +66,8 @@ export type Page<T> = {
   pageSize: number;
   totalCount: number;
   correlationId: string;
+  /** Server clock at read time, where the list sends it (assignments). */
+  serverTime?: string;
 };
 
 export type Opportunity = {
@@ -100,6 +102,8 @@ export type Assignment = {
   batchVersion?: number;
   claimId?: string;
   collectorScopeId?: string;
+  /** Earliest pickup time a handoff may report. */
+  assignedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 };

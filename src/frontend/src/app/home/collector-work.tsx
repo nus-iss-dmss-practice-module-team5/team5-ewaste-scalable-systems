@@ -60,12 +60,32 @@ import {
 
 type Notice = { testId: string; text: string };
 
+/** Now on the server clock, given the server-minus-phone offset. */
+function serverNow(offsetMs: number): number {
+  return Date.now() + offsetMs;
+}
+
+/**
+ * Earliest pickup time the picker offers: the first whole minute at or after
+ * the assignment, since the server refuses any time before `assigned_at`.
+ */
+function pickupMin(assignedAt?: string): string {
+  const assigned = assignedAt ? Date.parse(assignedAt) : Number.NaN;
+  if (Number.isNaN(assigned)) {
+    return "";
+  }
+  return toLocalInput(
+    new Date(Math.ceil(assigned / MINUTE_MS) * MINUTE_MS).toISOString(),
+  );
+}
+
 /** A failed pickup or handoff, as sent online or saved as a draft. */
 type CapturedCommand =
   | { command: "RECORD_HANDOFF"; payload: HandoffCommand }
   | { command: "FAIL_PICKUP"; payload: FailPickupCommand };
 
 const MAX_ACTUAL_ITEM_COUNT = 100000;
+const MINUTE_MS = 60_000;
 const BATCH_VERSIONS_KEY = "collector-batch-versions";
 // Until the API returns batch_version on assignments (EWSS-21), the version
 // is known only on the device that selected the batch (EWSS-15 PW-4).
@@ -247,6 +267,12 @@ export function CollectorWork({
     fixHandoff?.verificationHash ?? "",
   );
   const [handoffNotes, setHandoffNotes] = useState(fixHandoff?.notes ?? "");
+  // Latest pickup time the picker offers ("now" on the server clock, whole
+  // minutes). Refreshed when an assignment is opened or the picker is focused.
+  const [pickupMax, setPickupMax] = useState("");
+  // Server clock minus this phone's, from the last assignment list. The
+  // server refuses a pickup time later than its own now.
+  const serverOffsetMs = useRef(0);
   const selectKey = useRetryKey();
   const acceptKey = useRetryKey();
   const rejectKey = useRetryKey();
@@ -367,6 +393,12 @@ export function CollectorWork({
       if (generation !== loadGeneration.current) {
         return;
       }
+      const serverNow = assigned.serverTime
+        ? Date.parse(assigned.serverTime)
+        : Number.NaN;
+      if (!Number.isNaN(serverNow)) {
+        serverOffsetMs.current = serverNow - Date.now();
+      }
       setAvailable(batches.data);
       setAssignments(assigned.data);
       keepOnDevice(assigned.data, saveToken);
@@ -436,6 +468,25 @@ export function CollectorWork({
       }
     }
     onFixDone?.();
+  }
+
+  function refreshPickupMax(): string {
+    const max = toLocalInput(
+      new Date(serverNow(serverOffsetMs.current)).toISOString(),
+    );
+    setPickupMax(max);
+    return max;
+  }
+
+  // Defaults the pickup time to now when it is empty or before the opened
+  // assignment was made, so the form starts from a time the server accepts.
+  function openAssignment(row: Assignment) {
+    setSelectedAssignment(row.assignmentId);
+    const max = refreshPickupMax();
+    const min = pickupMin(row.assignedAt);
+    if (!pickupAt || (min && pickupAt < min)) {
+      setPickupAt(max);
+    }
   }
 
   function showValidation(text: string) {
@@ -680,6 +731,17 @@ export function CollectorWork({
     const actualItemCount = Number(actualCount);
     if (!pickupOccurredAt || !representative.trim()) {
       showValidation("Pickup time and the donor representative are required.");
+      return;
+    }
+    const pickupMs = Date.parse(pickupOccurredAt);
+    if (active.assignedAt && pickupMs < Date.parse(active.assignedAt)) {
+      showValidation(
+        `Pickup time cannot be before this assignment was made (${formatWhen(active.assignedAt)}).`,
+      );
+      return;
+    }
+    if (pickupMs > serverNow(serverOffsetMs.current)) {
+      showValidation("Pickup time cannot be in the future.");
       return;
     }
     if (
@@ -1009,7 +1071,7 @@ export function CollectorWork({
                   type="button"
                   data-testid={`collector-open-${row.assignmentId}`}
                   className="shrink-0 font-medium text-teal-800"
-                  onClick={() => setSelectedAssignment(row.assignmentId)}
+                  onClick={() => openAssignment(row)}
                 >
                   Open
                 </button>
@@ -1120,7 +1182,10 @@ export function CollectorWork({
                   Report failed pickup
                 </button>
               </form>
+              {/* min/max limit the picker; onHandoff checks every field and
+                  explains a refusal, instead of the browser's own bubble. */}
               <form
+                noValidate
                 onSubmit={(event) => void onHandoff(event)}
                 className="grid gap-2"
               >
@@ -1128,10 +1193,22 @@ export function CollectorWork({
                 <input
                   data-testid="collector-pickup-at"
                   type="datetime-local"
+                  aria-label="Pickup time"
                   value={pickupAt}
+                  min={pickupMin(active.assignedAt) || undefined}
+                  max={pickupMax || undefined}
+                  onFocus={() => refreshPickupMax()}
                   onChange={(event) => setPickupAt(event.target.value)}
                   className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
                 />
+                {active.assignedAt ? (
+                  <p
+                    data-testid="collector-pickup-range"
+                    className="text-xs text-slate-600"
+                  >
+                    Between {formatWhen(active.assignedAt)} (assigned) and now.
+                  </p>
+                ) : null}
                 <input
                   data-testid="collector-representative"
                   value={representative}

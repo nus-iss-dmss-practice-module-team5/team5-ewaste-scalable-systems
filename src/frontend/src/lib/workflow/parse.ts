@@ -207,11 +207,13 @@ export function parseAssignment(value: unknown): Assignment {
   const claimId = readString(value, "claim_id");
   const batchVersion = readNumber(value, "batch_version");
   const collectorScopeId = readString(value, "collector_scope_id");
+  const assignedAt = readString(value, "assigned_at");
   const createdAt = readString(value, "created_at");
   const updatedAt = readString(value, "updated_at");
   if (claimId) assignment.claimId = claimId;
   if (batchVersion !== undefined) assignment.batchVersion = batchVersion;
   if (collectorScopeId) assignment.collectorScopeId = collectorScopeId;
+  if (assignedAt) assignment.assignedAt = assignedAt;
   if (createdAt) assignment.createdAt = createdAt;
   if (updatedAt) assignment.updatedAt = updatedAt;
   return assignment;
@@ -508,13 +510,16 @@ function parsePage<T>(
   if (!isRecord(value) || !Array.isArray(value.data)) {
     throw contractError(`${label} list is missing data.`);
   }
-  return {
+  const page: Page<T> = {
     data: value.data.map(parseItem),
     page: requireNumber(value, "page", label),
     pageSize: requireNumber(value, "page_size", label),
     totalCount: requireNumber(value, "total_count", label),
     correlationId: requireString(value, "correlation_id", label),
   };
+  const serverTime = readString(value, "server_time");
+  if (serverTime) page.serverTime = serverTime;
+  return page;
 }
 
 export function parseBatchPage(value: unknown): Page<Batch> {

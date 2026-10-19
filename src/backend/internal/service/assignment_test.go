@@ -278,9 +278,56 @@ func TestAssignmentHandoffCompletesBatchAndEmitsEvent(t *testing.T) {
 }
 
 func TestHandoffValidationRequiresDesignBounds(t *testing.T) {
-	future := time.Now().UTC().Add(time.Minute)
-	if err := validateHandoff(dto.HandoffRequest{PickupOccurredAt: future, DonorRepresentativeName: "rep", ActualItemCount: 1, VerificationHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, time.Now().UTC()); !errors.Is(err, ErrAssignmentValidation) {
+	now := time.Now().UTC()
+	future := now.Add(time.Minute)
+	err := validateHandoff(dto.HandoffRequest{PickupOccurredAt: future, DonorRepresentativeName: "rep", ActualItemCount: 1, VerificationHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, now)
+	if !errors.Is(err, ErrAssignmentValidation) {
 		t.Fatalf("expected future handoff to be rejected, got %v", err)
+	}
+	details, ok := AssignmentValidationDetailsFromError(err)
+	if !ok || details.Field != "pickup_occurred_at" || details.Reason != PickupTimeInFuture || details.EarliestAllowed != nil || details.LatestAllowed == nil || !details.LatestAllowed.Equal(now) {
+		t.Fatalf("future handoff did not report the latest allowed time: %+v", details)
+	}
+}
+
+func TestHandoffBeforeAssignmentReportsAllowedInterval(t *testing.T) {
+	repo := newFakeAssignmentRepository()
+	workflow := NewAssignmentWorkflowService(repo)
+	assignedAt := time.Date(2026, time.January, 1, 10, 0, 30, 0, time.UTC)
+	now := assignedAt
+	workflow.clock = func() time.Time { return now }
+	workflow.newID = func() string { return "generated-id" }
+
+	selection, err := workflow.Select(context.Background(), "batch-1", dto.AssignmentSelectionRequest{
+		ExpectedVersion: 1, ClaimEpoch: "1", CollectorScopeID: "scope-1",
+	}, testAssignmentMetadata("selection-key-0001"))
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if !selection.Data.AssignedAt.Equal(assignedAt) {
+		t.Fatalf("assignment view assigned_at = %s, want %s", selection.Data.AssignedAt, assignedAt)
+	}
+
+	now = assignedAt.Add(10 * time.Minute)
+	commands := len(repo.commands)
+	metadata := testAssignmentMetadata("handoff-key-0001")
+	metadata.ExpectedVersion = 2
+	_, err = workflow.Handoff(context.Background(), selection.Data.AssignmentID, dto.HandoffRequest{
+		// The minute the collector picked, before the assignment's seconds.
+		PickupOccurredAt: assignedAt.Truncate(time.Minute), DonorRepresentativeName: "Donor representative", ActualItemCount: 1,
+		VerificationHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}, metadata)
+	if !errors.Is(err, ErrAssignmentValidation) {
+		t.Fatalf("expected handoff before assignment to be rejected, got %v", err)
+	}
+	details, ok := AssignmentValidationDetailsFromError(err)
+	if !ok || details.Field != "pickup_occurred_at" || details.Reason != PickupTimeBeforeAssignment ||
+		details.EarliestAllowed == nil || !details.EarliestAllowed.Equal(assignedAt) ||
+		details.LatestAllowed == nil || !details.LatestAllowed.Equal(now) {
+		t.Fatalf("handoff before assignment did not report the allowed interval: %+v", details)
+	}
+	if len(repo.commands) != commands || len(repo.handoffs) != 0 {
+		t.Fatalf("refused handoff wrote state: commands=%d handoffs=%d", len(repo.commands), len(repo.handoffs))
 	}
 }
 

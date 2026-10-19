@@ -394,7 +394,7 @@ func (s *AssignmentWorkflowService) recordPickup(ctx context.Context, assignment
 		if !failed {
 			request := payload.(dto.HandoffRequest)
 			if request.PickupOccurredAt.Before(assignment.AssignedAt) {
-				return ErrAssignmentValidation
+				return pickupTimeError(PickupTimeBeforeAssignment, &assignment.AssignedAt, s.clock().UTC())
 			}
 		}
 		now := s.clock().UTC().Truncate(time.Microsecond)
@@ -638,7 +638,10 @@ func parsePositiveUint(value string) (uint64, error) {
 }
 
 func validateHandoff(request dto.HandoffRequest, now time.Time) error {
-	if request.PickupOccurredAt.IsZero() || request.PickupOccurredAt.After(now) || strings.TrimSpace(request.DonorRepresentativeName) == "" || len([]rune(request.DonorRepresentativeName)) > 100 || request.ActualItemCount < 1 || request.ActualItemCount > 100000 || len(request.VerificationHash) != 64 {
+	if request.PickupOccurredAt.After(now) {
+		return pickupTimeError(PickupTimeInFuture, nil, now)
+	}
+	if request.PickupOccurredAt.IsZero() || strings.TrimSpace(request.DonorRepresentativeName) == "" || len([]rune(request.DonorRepresentativeName)) > 100 || request.ActualItemCount < 1 || request.ActualItemCount > 100000 || len(request.VerificationHash) != 64 {
 		return ErrAssignmentValidation
 	}
 	if _, err := hex.DecodeString(request.VerificationHash); err != nil {
@@ -709,7 +712,7 @@ func staleAssignmentError(ctx context.Context, tx repository.AssignmentTransacti
 }
 
 func viewOf(assignment *model.BatchAssignment) dto.AssignmentView {
-	return dto.AssignmentView{AssignmentID: assignment.ID, BatchID: assignment.BatchID, ClaimID: assignment.ClaimID, CollectorUserID: assignment.CollectorUserID, CollectorScopeID: assignment.CollectorScopeID, AssignmentStatus: assignment.AssignmentStatus, AssignmentSequence: int64(assignment.AssignmentSequence), Version: int64(assignment.Version), CreatedAt: assignment.CreatedAt, UpdatedAt: assignment.UpdatedAt}
+	return dto.AssignmentView{AssignmentID: assignment.ID, BatchID: assignment.BatchID, ClaimID: assignment.ClaimID, CollectorUserID: assignment.CollectorUserID, CollectorScopeID: assignment.CollectorScopeID, AssignmentStatus: assignment.AssignmentStatus, AssignmentSequence: int64(assignment.AssignmentSequence), Version: int64(assignment.Version), AssignedAt: assignment.AssignedAt, CreatedAt: assignment.CreatedAt, UpdatedAt: assignment.UpdatedAt}
 }
 
 func stateForEvent(eventID string) string {

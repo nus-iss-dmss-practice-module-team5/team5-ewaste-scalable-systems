@@ -191,6 +191,12 @@ func (h *AssignmentController) writeMutationError(c *gin.Context, err error) {
 			return
 		}
 	}
+	if code == apierror.ValidationError {
+		if details, ok := service.AssignmentValidationDetailsFromError(err); ok {
+			response.ErrorWithValidationDetails(c, code, middleware.GetCorrelationID(c), details)
+			return
+		}
+	}
 	response.Error(c, code, middleware.GetCorrelationID(c))
 }
 

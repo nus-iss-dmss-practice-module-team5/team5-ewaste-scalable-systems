@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowError } from "@/lib/workflow/errors";
 import type { Assignment, Batch } from "@/lib/workflow/types";
 import { CollectorWork } from "./collector-work";
+import { toLocalInput } from "./workflow-ui";
 
 const listBatches = vi.fn();
 const listAssignments = vi.fn();
@@ -226,6 +227,7 @@ describe("collector work", () => {
     const keysSent = () => recordHandoff.mock.calls.map((call) => call[4]);
     render(<CollectorWork />);
     await user.click(await screen.findByTestId("collector-open-asg-1"));
+    await user.clear(screen.getByTestId("collector-pickup-at"));
     await user.type(
       screen.getByTestId("collector-pickup-at"),
       "2026-09-23T10:00",
@@ -322,6 +324,7 @@ describe("collector work", () => {
     count: string,
   ) {
     await user.click(await screen.findByTestId("collector-open-asg-1"));
+    await user.clear(screen.getByTestId("collector-pickup-at"));
     await user.type(
       screen.getByTestId("collector-pickup-at"),
       "2026-09-23T10:00",
@@ -403,10 +406,102 @@ describe("collector work", () => {
     expect(screen.getByTestId("collector-retry")).toBeInTheDocument();
   });
 
+  it("defaults the pickup time to now on the server clock, within the assignment interval", async () => {
+    const user = userEvent.setup();
+    // The server clock is two hours behind this phone.
+    const serverNow = Date.now() - 2 * 60 * 60_000;
+    listAssignments.mockResolvedValue({
+      ...page([{ ...accepted, assignedAt: "2026-09-23T09:30:20Z" }]),
+      serverTime: new Date(serverNow).toISOString(),
+    });
+    render(<CollectorWork />);
+    await user.click(await screen.findByTestId("collector-open-asg-1"));
+
+    const pickupAt = screen.getByTestId("collector-pickup-at");
+    // The minute may roll over between reading the clock and the click.
+    const nowChoices = [
+      toLocalInput(new Date(serverNow).toISOString()),
+      toLocalInput(new Date(serverNow + 60_000).toISOString()),
+    ];
+    expect(nowChoices).toContain((pickupAt as HTMLInputElement).value);
+    expect(nowChoices).toContain(pickupAt.getAttribute("max"));
+    // The first whole minute at or after assigned_at.
+    expect(pickupAt).toHaveAttribute(
+      "min",
+      toLocalInput("2026-09-23T09:31:00Z"),
+    );
+    expect(screen.getByTestId("collector-pickup-range")).toHaveTextContent(
+      new Date("2026-09-23T09:30:20Z").toLocaleString(),
+    );
+  });
+
+  it("rejects a pickup time before the assignment before calling handoff", async () => {
+    const user = userEvent.setup();
+    listAssignments.mockResolvedValue(
+      page([{ ...accepted, assignedAt: "2026-09-23T10:00:30Z" }]),
+    );
+    sessionStorage.setItem(
+      "collector-batch-versions",
+      JSON.stringify({ "batch-1": 5 }),
+    );
+    render(<CollectorWork />);
+    await user.click(await screen.findByTestId("collector-open-asg-1"));
+    await user.clear(screen.getByTestId("collector-pickup-at"));
+    // The same minute as the assignment, but before its seconds.
+    await user.type(
+      screen.getByTestId("collector-pickup-at"),
+      toLocalInput("2026-09-23T10:00:00Z"),
+    );
+    await user.type(
+      screen.getByTestId("collector-representative"),
+      "Representative",
+    );
+    await user.type(screen.getByTestId("collector-actual-count"), "10");
+    await user.type(screen.getByTestId("collector-hash"), "a".repeat(64));
+    await user.click(screen.getByTestId("collector-handoff-submit"));
+    expect(
+      await screen.findByTestId("collector-action-validation"),
+    ).toHaveTextContent("before this assignment was made");
+    expect(recordHandoff).not.toHaveBeenCalled();
+  });
+
+  it("rejects a pickup time later than now on the server clock", async () => {
+    const user = userEvent.setup();
+    const serverNow = Date.now() - 2 * 60 * 60_000;
+    listAssignments.mockResolvedValue({
+      ...page([accepted]),
+      serverTime: new Date(serverNow).toISOString(),
+    });
+    sessionStorage.setItem(
+      "collector-batch-versions",
+      JSON.stringify({ "batch-1": 5 }),
+    );
+    render(<CollectorWork />);
+    await user.click(await screen.findByTestId("collector-open-asg-1"));
+    await user.clear(screen.getByTestId("collector-pickup-at"));
+    // Past on this phone's clock, but an hour ahead of the server.
+    await user.type(
+      screen.getByTestId("collector-pickup-at"),
+      toLocalInput(new Date(serverNow + 60 * 60_000).toISOString()),
+    );
+    await user.type(
+      screen.getByTestId("collector-representative"),
+      "Representative",
+    );
+    await user.type(screen.getByTestId("collector-actual-count"), "10");
+    await user.type(screen.getByTestId("collector-hash"), "a".repeat(64));
+    await user.click(screen.getByTestId("collector-handoff-submit"));
+    expect(
+      await screen.findByTestId("collector-action-validation"),
+    ).toHaveTextContent("cannot be in the future");
+    expect(recordHandoff).not.toHaveBeenCalled();
+  });
+
   it("rejects a short verification hash before calling handoff", async () => {
     const user = userEvent.setup();
     render(<CollectorWork />);
     await user.click(await screen.findByTestId("collector-open-asg-1"));
+    await user.clear(screen.getByTestId("collector-pickup-at"));
     await user.type(
       screen.getByTestId("collector-pickup-at"),
       "2026-09-23T10:00",
