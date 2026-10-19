@@ -217,6 +217,8 @@ Open **Logs** under your Log Analytics workspace (`log-ewastescalable-centralize
 
 #### Query 1: Chronological Scale-Out and Scale-In Transitions
 
+_Use this query to screenshot the automated rescale decisions from KEDA._
+
 ```kql
 // Capture automated scale-out to 3 and scale-down to 1
 ContainerAppSystemLogs_CL
@@ -315,9 +317,60 @@ ContainerAppSystemLogs_CL
 | order by TimeGenerated desc
 ```
 
-> **Smart Capture:** The log entry: `aca-ewastescalable-prod-matcher has been scaled to 3 by the scaler: kafka-ewaste-batch-events.`
+> **Sample Capture:** The log entry: `aca-ewastescalable-prod-matcher has been scaled to 3 by the scaler: kafka-ewaste-batch-events.`
 
 ![img_4.png](img_4.png)
+
+---
+
+#### Query 6: Kafka Event Hubs Consumer Lag per Partition (Live Matrix)
+
+_Use this query to show message backlog across Partition 0, Partition 1, and Partition 2._
+
+```kql
+// View exact uncommitted message lag per partition on ewaste.batch.events
+ContainerAppConsoleLogs_CL
+| where TimeGenerated >= ago(2h)
+| extend log = parse_json(Log_s)
+| where log.observation == "consumer_lag"
+| extend
+    ConsumerGroup = tostring(log.consumer_group),
+    Topic = tostring(log.topic),
+    PartitionNum = toint(log.partition),
+    CommittedOffset = tolong(log.committed_offset),
+    EndOffset = tolong(log.end_offset),
+    ConsumerLag = tolong(log.consumer_lag)
+| summarize arg_max(TimeGenerated, *) by Topic, ConsumerGroup, PartitionNum
+| extend Partition = strcat("Partition ", PartitionNum)
+| extend BacklogStatus = case(
+    ConsumerLag == 0, "Drained (0 Lag)",
+    ConsumerLag <= 50, "Below Scale Threshold (<= 50)",
+    "Scale Threshold Breached (> 50)")
+| project Partition, ConsumerGroup, Topic, CommittedOffset, EndOffset, ConsumerLag, BacklogStatus, LastSampled=TimeGenerated
+| order by ConsumerGroup asc, Partition asc
+```
+
+---
+
+#### Query 7: All Applications Scaling Visualizer (Full Fleet Timechart)
+
+_Use this query to visualize the scaling curves of all 7 microservices simultaneously._
+
+```kql
+// Visualizing replica expansion and scale-down across all 7 platform container apps
+ContainerAppSystemLogs_CL
+| where TimeGenerated >= ago(12h)
+| where ContainerAppName_s startswith "aca-ewastescalable-prod-"
+| extend App = replace_string(ContainerAppName_s, "aca-ewastescalable-prod-", "")
+| extend TargetReplicas = case(
+    Log_s contains "scaled to 3", 3,
+    Log_s contains "scaled to 2", 2,
+    Log_s contains "New size: 2", 2,
+    Log_s contains "Scale down to 1", 1,
+    1)
+| summarize MaxReplicas = max(TargetReplicas) by bin(TimeGenerated, 2m), App
+| render timechart
+```
 
 ---
 
@@ -334,3 +387,7 @@ ContainerAppSystemLogs_CL
 3. **Slide 3: High Availability & SLO Compliance**
    - **Picture:** Screenshot of **Query 3** (`ContainerCrashes = 0`) and **Query 4** (`P95 = 2449.28ms`).
    - **Talking Point:** _"Across all 21 scaling transitions, the platform maintained 100% availability with 0 container crashes and absorbed 14,000+ requests with P95 latency well within our 3,000ms SLO."_
+
+4. **Slide 4: Event-Driven Autoscaling & Partition Lag**
+   - **Picture:** Screenshot of **Query 6** (Partition lag matrix) and **Query 7** (All apps scaling visualizer).
+   - **Talking Point:** _"For asynchronous background processing, KEDA monitors consumer lag across all 3 Event Hubs partitions. When uncommitted lag exceeded 50 messages, the matcher scaled to 3 replicas—assigning one worker per partition to drain backlog in parallel."_
