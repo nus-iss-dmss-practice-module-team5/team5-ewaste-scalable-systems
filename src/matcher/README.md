@@ -1,6 +1,10 @@
 # Matcher, API façade and persistence
 
-Sprint 3 anomaly/impact processing now runs alongside matching in this image. See
+Matching and anomaly/impact processing can run as separate applications using
+`python -m matcher run-matching` and `python -m matcher run-analytics`. See the
+[EWSS-23 worker service runbook](../../docs/worker-services.md) for independent
+settings, Docker targets and multi-consumer replay verification. The original
+`run` command retains combined startup for existing deployments. See
 [the analytics worker and evidence runbook](../../docs/analytics-worker.md) for the
 `d3-v1` rules, independent consumer group, service authentication and recovery tests.
 

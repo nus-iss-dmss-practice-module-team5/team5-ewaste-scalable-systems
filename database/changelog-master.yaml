@@ -93,6 +93,9 @@ databaseChangeLog:
       file: changes/031-add-round-robin-collector-indexes.sql
       relativeToChangelogFile: true
   - include:
+      file: changes/032-create-registration-reviews.sql
+      relativeToChangelogFile: true
+  - include:
       file: seed/101-seed-organisations.sql
       relativeToChangelogFile: true
   - include:

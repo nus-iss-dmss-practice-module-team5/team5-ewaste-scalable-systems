@@ -187,13 +187,13 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # Pre-flight check: Verify MySQL Flexible Server and ewastedb exist before installing Liquibase
+      # Pre-flight check: Verify MySQL Flexible Server and ewastescalabledb exist before installing Liquibase
       - name: Verify MySQL Server and Database Existence
         run: |
           TARGET_ENV="${{ needs.resolve-environment.outputs.environment }}"
-          SERVER_NAME="mysql-ewaste-${TARGET_ENV}"
-          RG="rg-ewaste-${TARGET_ENV}"
-          DB_NAME="ewastedb"
+          SERVER_NAME="mysql-ewastescalable-${TARGET_ENV}"
+          RG="rg-ewastescalable-${TARGET_ENV}"
+          DB_NAME="ewastescalabledb"
 
           SUB_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)
           az account set --subscription "$SUB_ID"
@@ -232,8 +232,8 @@ jobs:
       - name: Execute Liquibase Database Migration
         env:
           TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
-          MYSQL_HOST: "mysql-ewaste-${{ needs.resolve-environment.outputs.environment }}.mysql.database.azure.com"
-          MYSQL_DB: "ewastedb"
+          MYSQL_HOST: "mysql-ewastescalable-${{ needs.resolve-environment.outputs.environment }}.mysql.database.azure.com"
+          MYSQL_DB: "ewastescalabledb"
           MYSQL_USER: "ewasteadmin"
           MYSQL_PASS: ${{ secrets.MYSQL_DB_ADMIN_PASSWORD }}
           COMMAND: ${{ inputs.command || 'update' }}
@@ -242,10 +242,8 @@ jobs:
           echo " Executing Liquibase: $COMMAND on $MYSQL_HOST / $MYSQL_DB"
           echo "=========================================================="
 
-          CONTEXT_PARAM=""
-          if [ "$TARGET_ENV" != "prod" ]; then
-            CONTEXT_PARAM="--contexts=seed"
-          fi
+          # Seed data is applied across all environments including prod
+          CONTEXT_PARAM="--contexts=seed"
 
           liquibase \
             --changelog-file=database/changelog-master.yaml \

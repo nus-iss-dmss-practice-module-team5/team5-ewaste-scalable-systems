@@ -3,10 +3,10 @@ name: Matching and Analytics Contracts, Kafka and MySQL Persistence
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['src/matcher/**', 'src/backend/**', 'contracts/matching/**', 'database/**', 'scripts/test-matcher.sh', 'scripts/deploy-matcher.sh', '.github/workflows/cd-pipeline.yml', '.github/workflows/matcher.yml']
+    paths: ['src/matcher/**', 'src/backend/**', 'contracts/matching/**', 'database/**', 'scripts/test-matcher.sh', 'scripts/test-worker-services.sh', 'scripts/deploy-matcher.sh', '.github/workflows/cd-pipeline.yml', '.github/workflows/matcher.yml']
   push:
     branches: [dev, main]
-    paths: ['src/matcher/**', 'src/backend/**', 'contracts/matching/**', 'database/**', 'scripts/test-matcher.sh', 'scripts/deploy-matcher.sh', '.github/workflows/cd-pipeline.yml', '.github/workflows/matcher.yml']
+    paths: ['src/matcher/**', 'src/backend/**', 'contracts/matching/**', 'database/**', 'scripts/test-matcher.sh', 'scripts/test-worker-services.sh', 'scripts/deploy-matcher.sh', '.github/workflows/cd-pipeline.yml', '.github/workflows/matcher.yml']
 
 permissions:
   contents: read
@@ -14,15 +14,19 @@ permissions:
 jobs:
   matcher:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Verify matching and analytics against disposable Go, MySQL and Kafka services
         run: ./scripts/test-matcher.sh
+      - name: Verify separate worker apps, replicas and replay after failover
+        run: ./scripts/test-worker-services.sh
       - name: Retain verification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: matcher-persistence-evidence
-          path: artifacts/matcher/
+          path: |
+            artifacts/matcher/
+            artifacts/worker-services/
           retention-days: 14

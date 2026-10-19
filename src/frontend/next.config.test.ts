@@ -5,16 +5,31 @@ import {
   unstable_getResponseFromNextConfig,
 } from "next/experimental/testing/server";
 
-const targets = {
+const canonicalTargets = {
   IDENTITY_ACCESS_URL: "https://identity.test",
   BATCH_WORKFLOW_URL: "https://workflow.test",
   CLAIM_LOGISTICS_URL: "https://logistics.test",
   CUSTODY_VERIFICATION_URL: "https://custody.test",
 };
 
+const aliasTargets = {
+  AUTH_SERVICE_URL: "https://identity-alias.test",
+  BATCH_SERVICE_URL: "https://workflow-alias.test",
+  CLAIM_SERVICE_URL: "https://logistics-alias.test",
+  CUSTODY_SERVICE_URL: "https://custody-alias.test",
+};
+
+const allEnvKeys = [
+  ...Object.keys(canonicalTargets),
+  ...Object.keys(aliasTargets),
+  "API_PROXY_TARGET",
+  "NEXT_PUBLIC_API_BASE_URL",
+  "NEXT_PUBLIC_API_URL",
+];
+
 beforeEach(() => {
   vi.resetModules();
-  for (const name of Object.keys(targets)) vi.stubEnv(name, "");
+  for (const name of allEnvKeys) vi.stubEnv(name, "");
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -37,7 +52,7 @@ describe("API routing", () => {
   });
 
   it("retains custom ports in configured destinations", async () => {
-    for (const name of Object.keys(targets))
+    for (const name of Object.keys(canonicalTargets))
       vi.stubEnv(name, "http://localhost:8084/");
     const { default: config } = await import("./next.config");
     const routes = await config.rewrites!();
@@ -52,9 +67,27 @@ describe("API routing", () => {
   });
 
   it("rejects partial split configuration", async () => {
-    vi.stubEnv("IDENTITY_ACCESS_URL", targets.IDENTITY_ACCESS_URL);
+    vi.stubEnv("IDENTITY_ACCESS_URL", canonicalTargets.IDENTITY_ACCESS_URL);
     await expect(import("./next.config")).rejects.toThrow(
       "Set all four service URLs",
+    );
+  });
+
+  it("routes using alias service URLs when canonical variables are unset", async () => {
+    for (const [name, value] of Object.entries(aliasTargets)) {
+      vi.stubEnv(name, value);
+    }
+    expect(await destination("/api/v1/auth/login")).toBe(
+      "https://identity-alias.test/v1/auth/login",
+    );
+    expect(await destination("/api/v1/batches/b1/claim")).toBe(
+      "https://logistics-alias.test/v1/claims/batches/b1",
+    );
+    expect(await destination("/api/v1/assignments/a1/handoff")).toBe(
+      "https://custody-alias.test/v1/custody/assignments/a1/handoff",
+    );
+    expect(await destination("/api/v1/batches")).toBe(
+      "https://workflow-alias.test/v1/batches",
     );
   });
 
@@ -115,7 +148,7 @@ describe("API routing", () => {
       "/internal/v1/analytics/batches/b1/results",
     ],
   ])("routes %s to its owner", async (path, service, localPath) => {
-    for (const [name, value] of Object.entries(targets))
+    for (const [name, value] of Object.entries(canonicalTargets))
       vi.stubEnv(name, value);
     expect(await destination(path)).toBe(`https://${service}.test${localPath}`);
   });

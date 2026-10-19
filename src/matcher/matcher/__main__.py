@@ -3,7 +3,6 @@ import os
 import signal
 import sys
 import threading
-from pathlib import Path
 
 from .contract import ContractError, canonical, loads, require
 from .core import evaluate
@@ -21,22 +20,12 @@ def positive(name):
     return value
 
 
-def main():
-    if sys.argv[1:] == ["evaluate"]:
-        try:
-            result = evaluate(loads(sys.stdin.buffer.read()))
-            sys.stdout.buffer.write(canonical(result) + b"\n")
-        except ContractError as exc:
-            print(exc.code, file=sys.stderr)
-            return 2
-        return 0
-    require(sys.argv[1:] == ["run"])
+def matching_runner():
     from .facade import FacadeClient
     from .kafka import KafkaRunner, QuarantinePublisher, observe
     from .worker import Processor
     from .health import Health
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
     from .runtime import kafka_config, token_file, token_provider
     common = kafka_config()
     local = os.environ.get("MATCHER_LOCAL_TEST") == "1"
@@ -63,23 +52,59 @@ def main():
                          offset_reset=required("MATCHER_OFFSET_RESET"), max_poll_ms=positive("MATCHER_MAX_POLL_MS"),
                          session_timeout_ms=positive("MATCHER_SESSION_TIMEOUT_MS"), workers=positive("MATCHER_WORKERS"),
                          processor=processor, observer=observer, health=health)
-    from .analytics_runtime import CombinedHealth, analytics_runner, run_workers
-    analytics = analytics_runner(common, topic, runner.group_id, observe, positive, local)
-    probe_health = CombinedHealth([health, analytics[1]], observe) if analytics else health
+    return runner, health, common, topic
+
+
+def serve(runner, health, port_name):
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
-    server = probe_health.serve(positive("MATCHER_HEALTH_PORT")) if os.environ.get("MATCHER_HEALTH_PORT") else None
+    server = health.serve(positive(port_name)) if os.environ.get(port_name) else None
     try:
-        if analytics:
-            run_workers([runner, analytics[0]], stop)
-        else:
-            runner.run(stop)
+        runner(stop)
     finally:
         if server:
             server.shutdown()
             server.server_close()
     return 0
+
+
+def main():
+    if sys.argv[1:] == ["evaluate"]:
+        try:
+            result = evaluate(loads(sys.stdin.buffer.read()))
+            sys.stdout.buffer.write(canonical(result) + b"\n")
+        except ContractError as exc:
+            print(exc.code, file=sys.stderr)
+            return 2
+        return 0
+    require(len(sys.argv) == 2 and sys.argv[1] in ("run", "run-matching", "run-analytics"))
+    command = sys.argv[1]
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    from .analytics_runtime import CombinedHealth, analytics_runner, run_workers
+    if command == "run-analytics":
+        from .kafka import observe
+        from .runtime import kafka_config
+        common = kafka_config(prefix="ANALYTICS")
+        topic = os.environ.get("ANALYTICS_TOPIC") or required("KAFKA_TOPIC_BATCH_EVENTS")
+        matching_group = os.environ.get("MATCHER_GROUP_ID") or os.environ.get("KAFKA_CONSUMER_GROUP", "matching-worker-v1")
+        runner, health = analytics_runner(common, topic, matching_group, observe, positive,
+                                          os.environ.get("ANALYTICS_LOCAL_TEST") == "1", standalone=True)
+        return serve(runner.run, health, "ANALYTICS_HEALTH_PORT")
+    if command == "run-matching":
+        matching_group = os.environ.get("MATCHER_GROUP_ID") or required("KAFKA_CONSUMER_GROUP")
+        require(matching_group != os.environ.get("ANALYTICS_GROUP_ID", "analytics-processing-v1"),
+                "INVALID_MATCHING_CONFIGURATION")
+    runner, health, common, topic = matching_runner()
+    if command == "run-matching":
+        return serve(runner.run, health, "MATCHER_HEALTH_PORT")
+    # Compatibility command for deployments that still run both consumers together.
+    from .kafka import observe
+    local = os.environ.get("MATCHER_LOCAL_TEST") == "1"
+    analytics = analytics_runner(common, topic, runner.group_id, observe, positive, local)
+    probe_health = CombinedHealth([health, analytics[1]], observe) if analytics else health
+    run = (lambda stop: run_workers([runner, analytics[0]], stop)) if analytics else runner.run
+    return serve(run, probe_health, "MATCHER_HEALTH_PORT")
 
 
 if __name__ == "__main__":

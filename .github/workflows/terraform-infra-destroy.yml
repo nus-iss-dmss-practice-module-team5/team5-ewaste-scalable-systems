@@ -95,7 +95,7 @@ jobs:
         env:
           TARGET_ENV: ${{ inputs.target_env }}
         run: |
-          RG="rg-ewaste-${TARGET_ENV}"
+          RG="rg-ewastescalable-${TARGET_ENV}"
 
           echo "=========================================================="
           echo " Pre-destroy: Cleaning up Container Apps in $RG"
@@ -103,8 +103,11 @@ jobs:
 
           # Azure Container Apps Environment cannot be deleted while containing apps.
           # Pre-delete all three container apps to prevent Terraform deletion deadlocks.
-          for APP_SUFFIX in api ui analytics; do
-            APP_NAME="aca-ewaste-${TARGET_ENV}-${APP_SUFFIX}"
+          for APP_SUFFIX in api ui analytics matcher; do
+            APP_NAME="aca-ewastescalable-${TARGET_ENV}-${APP_SUFFIX}"
+            if [ "$APP_SUFFIX" == "analytics" ]; then
+              APP_NAME="aca-ewastescalable-${TARGET_ENV}-analytic"
+            fi
             if az containerapp show --name "$APP_NAME" --resource-group "$RG" >/dev/null 2>&1; then
               echo "Deleting container app: ${APP_NAME}..."
               az containerapp delete --name "$APP_NAME" --resource-group "$RG" --yes || true
@@ -203,7 +206,7 @@ jobs:
         env:
           TARGET_ENV: ${{ inputs.target_env }}
         run: |
-          KV_NAME="kv-ewaste-${TARGET_ENV}"
+          KV_NAME="kv-ewastescalable-${TARGET_ENV}"
 
           echo "Checking if soft-deleted Key Vault $KV_NAME requires purge..."
           # Purge any soft-deleted vault so recreation won't collide on name

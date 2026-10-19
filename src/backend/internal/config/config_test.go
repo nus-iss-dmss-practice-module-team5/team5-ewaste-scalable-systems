@@ -30,7 +30,7 @@ auth:
 	t.Setenv("EWASTE_SERVER_ALLOWED_ORIGINS", "http://localhost:3000,https://example.com")
 	t.Setenv("EWASTE_DATABASE_HOST", "azure-mysql")
 	t.Setenv("EWASTE_DATABASE_PORT", "3306")
-	t.Setenv("EWASTE_DATABASE_NAME", "ewastedb")
+	t.Setenv("EWASTE_DATABASE_NAME", "ewastescalabledb")
 	t.Setenv("EWASTE_DATABASE_USER", "ewasteadmin")
 	t.Setenv("EWASTE_REDIS_ADDRESS", "azure-redis:6380")
 	t.Setenv("EWASTE_REDIS_DB", "1")
@@ -42,15 +42,15 @@ auth:
 	t.Setenv("EWASTE_RATE_LIMIT_REQUESTS", "25")
 	t.Setenv("EWASTE_RATE_LIMIT_WINDOW", "2m")
 	t.Setenv("EWASTE_KAFKA_ENABLED", "true")
-	t.Setenv("EWASTE_KAFKA_BROKERS", "evh-ewaste-dev.servicebus.windows.net:9093")
+	t.Setenv("EWASTE_KAFKA_BROKERS", "evh-ewastescalable-dev.servicebus.windows.net:9093")
 	t.Setenv("EWASTE_KAFKA_TLS_ENABLED", "true")
 	t.Setenv("EWASTE_KAFKA_SASL_MECHANISM", "PLAIN")
 	t.Setenv("EWASTE_KAFKA_SASL_USERNAME", "$ConnectionString")
-	t.Setenv("KAFKA_CONNECTION_STRING", "Endpoint=sb://evh-ewaste-dev.servicebus.windows.net/;SharedAccessKeyName=auth-ewaste-workload;SharedAccessKey=redacted")
+	t.Setenv("KAFKA_CONNECTION_STRING", "Endpoint=sb://evh-ewastescalable-dev.servicebus.windows.net/;SharedAccessKeyName=auth-ewastescalable-workload;SharedAccessKey=redacted")
 	t.Setenv("EWASTE_STORAGE_TYPE", "azure")
-	t.Setenv("EWASTE_STORAGE_AZURE_ACCOUNT_NAME", "stgewastedev")
+	t.Setenv("EWASTE_STORAGE_AZURE_ACCOUNT_NAME", "stgewastescalabledev")
 	t.Setenv("EWASTE_STORAGE_AZURE_CONTAINER_NAME", "evidence-private")
-	t.Setenv("EWASTE_STORAGE_AZURE_ENDPOINT", "https://stgewastedev.blob.core.windows.net/")
+	t.Setenv("EWASTE_STORAGE_AZURE_ENDPOINT", "https://stgewastescalabledev.blob.core.windows.net/")
 
 	cfg, err := Load(configPath)
 	if err != nil {
@@ -62,7 +62,7 @@ auth:
 	if len(cfg.Server.AllowedOrigins) != 2 || cfg.Server.AllowedOrigins[0] != "http://localhost:3000" || cfg.Server.AllowedOrigins[1] != "https://example.com" {
 		t.Fatalf("expected configured CORS origins, got %#v", cfg.Server.AllowedOrigins)
 	}
-	if cfg.Mode != ModeProduction || cfg.Database.Host != "azure-mysql" || cfg.Database.Port != 3306 || cfg.Database.Name != "ewastedb" || cfg.Database.User != "ewasteadmin" {
+	if cfg.Mode != ModeProduction || cfg.Database.Host != "azure-mysql" || cfg.Database.Port != 3306 || cfg.Database.Name != "ewastescalabledb" || cfg.Database.User != "ewasteadmin" {
 		t.Fatalf("expected database and mode environment values, got mode=%q database=%+v", cfg.Mode, cfg.Database)
 	}
 	if cfg.Database.Password != "db-secret" || cfg.Redis.Password != "redis-secret" || cfg.Redis.Address != "azure-redis:6380" || cfg.Redis.DB != 1 || !cfg.Redis.TLSEnabled {
@@ -80,13 +80,13 @@ auth:
 	if cfg.RateLimit.Requests != 25 || cfg.RateLimit.Window.Minutes() != 2 {
 		t.Fatalf("expected rate limit environment values, got requests=%d window=%s", cfg.RateLimit.Requests, cfg.RateLimit.Window)
 	}
-	if !cfg.Kafka.Enabled || len(cfg.Kafka.Brokers) != 1 || cfg.Kafka.Brokers[0] != "evh-ewaste-dev.servicebus.windows.net:9093" || !cfg.Kafka.TLSEnabled || cfg.Kafka.SASLMechanism != "PLAIN" || cfg.Kafka.SASLUsername != "$ConnectionString" {
+	if !cfg.Kafka.Enabled || len(cfg.Kafka.Brokers) != 1 || cfg.Kafka.Brokers[0] != "evh-ewastescalable-dev.servicebus.windows.net:9093" || !cfg.Kafka.TLSEnabled || cfg.Kafka.SASLMechanism != "PLAIN" || cfg.Kafka.SASLUsername != "$ConnectionString" {
 		t.Fatalf("expected Event Hubs Kafka connection settings, got %+v", cfg.Kafka)
 	}
 	if cfg.Kafka.SASLPassword == "" {
 		t.Fatal("expected Kafka connection string from KAFKA_CONNECTION_STRING")
 	}
-	if cfg.Storage.AdapterType != "azure" || cfg.Storage.AzureStorageAccount != "stgewastedev" || cfg.Storage.AzureStorageContainer != "evidence-private" || cfg.Storage.AzureStorageEndpoint != "https://stgewastedev.blob.core.windows.net/" {
+	if cfg.Storage.AdapterType != "azure" || cfg.Storage.AzureStorageAccount != "stgewastescalabledev" || cfg.Storage.AzureStorageContainer != "evidence-private" || cfg.Storage.AzureStorageEndpoint != "https://stgewastescalabledev.blob.core.windows.net/" {
 		t.Fatalf("expected storage environment values, got %+v", cfg.Storage)
 	}
 }
@@ -106,7 +106,7 @@ func TestApplyTestModeUsesLocalDependencies(t *testing.T) {
 
 func TestLoadStorageAdapterEnvironmentBindings(t *testing.T) {
 	t.Setenv("STORAGE_ADAPTER_TYPE", "azure_blob")
-	t.Setenv("AZURE_STORAGE_ACCOUNT", "stgewasteprod")
+	t.Setenv("AZURE_STORAGE_ACCOUNT", "stgewastescalableprod")
 	t.Setenv("AZURE_STORAGE_CONTAINER", "evidence-private")
 	t.Setenv("AZURE_USE_MANAGED_ID", "true")
 	t.Setenv("MAX_UPLOAD_SIZE_BYTES", "5242880")
@@ -119,13 +119,13 @@ func TestLoadStorageAdapterEnvironmentBindings(t *testing.T) {
 	if cfg.Storage.AdapterType != "azure_blob" {
 		t.Errorf("expected Storage.AdapterType 'azure_blob', got %q", cfg.Storage.AdapterType)
 	}
-	if cfg.Storage.AzureStorageAccount != "stgewasteprod" {
+	if cfg.Storage.AzureStorageAccount != "stgewastescalableprod" {
 		t.Errorf("expected Storage.AzureStorageAccount 'stgewasteprod', got %q", cfg.Storage.AzureStorageAccount)
 	}
 	if cfg.Storage.AzureStorageContainer != "evidence-private" {
 		t.Errorf("expected Storage.AzureStorageContainer 'evidence-private', got %q", cfg.Storage.AzureStorageContainer)
 	}
-	if cfg.Storage.AzureStorageEndpoint != "https://stgewasteprod.blob.core.windows.net/" {
+	if cfg.Storage.AzureStorageEndpoint != "https://stgewastescalableprod.blob.core.windows.net/" {
 		t.Errorf("expected auto-derived endpoint 'https://stgewasteprod.blob.core.windows.net/', got %q", cfg.Storage.AzureStorageEndpoint)
 	}
 	if !cfg.Storage.AzureUseManagedID {
@@ -150,9 +150,9 @@ func TestLoadReadsApprovedAnalyticsRuleVersionFromEnvironment(t *testing.T) {
 
 func TestLoadReadsEvidenceStorageEnvironmentContract(t *testing.T) {
 	t.Setenv("STORAGE_ADAPTER_TYPE", "azure_blob")
-	t.Setenv("AZURE_STORAGE_ACCOUNT", "stgewastedev")
+	t.Setenv("AZURE_STORAGE_ACCOUNT", "stgewastescalabledev")
 	t.Setenv("AZURE_STORAGE_CONTAINER", "evidence-private")
-	t.Setenv("AZURE_STORAGE_ENDPOINT", "https://stgewastedev.blob.core.windows.net/")
+	t.Setenv("AZURE_STORAGE_ENDPOINT", "https://stgewastescalabledev.blob.core.windows.net/")
 	t.Setenv("AZURE_USE_MANAGED_ID", "true")
 	t.Setenv("MAX_UPLOAD_SIZE_BYTES", "5242880")
 	t.Setenv("EWASTE_STORAGE_LOCAL_BASE_DIR", "data/test-evidence")
@@ -161,9 +161,9 @@ func TestLoadReadsEvidenceStorageEnvironmentContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load configuration: %v", err)
 	}
-	if cfg.Storage.AdapterType != "azure_blob" || cfg.Storage.AzureStorageAccount != "stgewastedev" ||
+	if cfg.Storage.AdapterType != "azure_blob" || cfg.Storage.AzureStorageAccount != "stgewastescalabledev" ||
 		cfg.Storage.AzureStorageContainer != "evidence-private" ||
-		cfg.Storage.AzureStorageEndpoint != "https://stgewastedev.blob.core.windows.net/" ||
+		cfg.Storage.AzureStorageEndpoint != "https://stgewastescalabledev.blob.core.windows.net/" ||
 		!cfg.Storage.AzureUseManagedID || cfg.Storage.MaxUploadSizeBytes != 5242880 ||
 		cfg.Storage.LocalBaseDir != "data/test-evidence" {
 		t.Fatalf("unexpected evidence storage configuration: %+v", cfg.Storage)

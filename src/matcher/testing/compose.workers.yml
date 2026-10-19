@@ -1,0 +1,67 @@
+# Overlay for disposable EWSS-23 acceptance. Credentials are synthetic test values.
+services:
+  matching-worker:
+    build:
+      context: ../../..
+      dockerfile: src/matcher/Dockerfile
+      target: matching-worker
+    environment:
+      MATCHER_LOCAL_TEST: '1'
+      MATCHER_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MATCHER_TOPIC: ewaste.batch.events
+      MATCHER_DLQ_TOPIC: ewaste.batch.events.matching.dlq.v1
+      MATCHER_GROUP_ID: matching-worker-v1
+      MATCHER_OFFSET_RESET: earliest
+      MATCHER_MAX_POLL_MS: '300000'
+      MATCHER_SESSION_TIMEOUT_MS: '6000'
+      MATCHER_WORKERS: '2'
+      MATCHER_FACADE_URL: http://api:8080
+      MATCHER_SIGNING_SECRET: local-matching-secret-at-least-32-characters
+      MATCHER_TOKEN_ISSUER: matcher-integration-test
+      MATCHER_TOKEN_AUDIENCE: matching-api
+      MATCHER_HTTP_TIMEOUT_SECONDS: '5'
+      MATCHER_MAX_RESPONSE_BYTES: '10485760'
+      MATCHER_MAX_RECORD_BYTES: '1048576'
+      MATCHER_DELIVERY_TIMEOUT_SECONDS: '10'
+      MATCHER_RETRY_BASE_SECONDS: '1'
+      MATCHER_RETRY_MAX_SECONDS: '5'
+      MATCHER_MAX_REFRESHES: '3'
+      MATCHER_HEALTH_PORT: '8000'
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    depends_on:
+      kafka:
+        condition: service_healthy
+  analytics-worker:
+    build:
+      context: ../../..
+      dockerfile: src/matcher/Dockerfile
+      target: analytics-worker
+    environment:
+      ANALYTICS_LOCAL_TEST: '1'
+      ANALYTICS_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ANALYTICS_TOPIC: ewaste.batch.events
+      ANALYTICS_GROUP_ID: analytics-processing-v1
+      ANALYTICS_OFFSET_RESET: earliest
+      ANALYTICS_MAX_POLL_MS: '300000'
+      ANALYTICS_SESSION_TIMEOUT_MS: '6000'
+      ANALYTICS_WORKERS: '2'
+      ANALYTICS_FACADE_URL: http://api:8080
+      ANALYTICS_SERVICE_TOKEN: local-analytics-service-token-at-least-32-characters
+      ANALYTICS_HTTP_TIMEOUT_SECONDS: '5'
+      ANALYTICS_MAX_RESPONSE_BYTES: '10485760'
+      ANALYTICS_MAX_RECORD_BYTES: '1048576'
+      ANALYTICS_RETRY_BASE_SECONDS: '1'
+      ANALYTICS_RETRY_MAX_SECONDS: '5'
+      ANALYTICS_HEALTH_PORT: '8000'
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    depends_on:
+      kafka:
+        condition: service_healthy

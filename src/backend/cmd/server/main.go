@@ -130,6 +130,7 @@ func run() error {
 	repo := repository.NewGormAuthRepository(db)
 	authService := service.NewAuthService(repo, tokens, appLogger.Logger)
 	authController := controller.NewAuthController(authService, appLogger.Logger)
+	registrationController := controller.NewRegistrationController(service.NewRegistrationService(repository.NewGormRegistrationRepository(db)), appLogger.Logger)
 
 	batchRepository := repository.NewGormBatchRepository(db)
 	batchService := service.NewBatchServiceWithAnalyticsRuleVersion(batchRepository, cfg.Analytics.ApprovedRuleVersion)
@@ -219,6 +220,8 @@ func run() error {
 		cfg.Auth.AnalyticsServiceToken,
 		workflowReadController,
 	)
+
+	router.RegisterRegistrationRoutes(appRouter.Group("/api/v1/auth"), registrationController, tokens, repo, limiter)
 
 	if err := matching.RegisterFromEnv(appRouter, db); err != nil {
 		return fmt.Errorf("configure matching facade: %w", err)

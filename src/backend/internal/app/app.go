@@ -113,6 +113,7 @@ func Run(serviceName router.Service) error {
 	switch serviceName {
 	case router.IdentityAccessService:
 		deps.AuthController = controller.NewAuthController(service.NewAuthService(authRepo, tokens, appLogger.Logger), appLogger.Logger)
+		deps.RegistrationController = controller.NewRegistrationController(service.NewRegistrationService(repository.NewGormRegistrationRepository(db)), appLogger.Logger)
 	case router.BatchWorkflowService:
 		batchRepo := repository.NewGormBatchRepository(db)
 		batchService := service.NewBatchServiceWithAnalyticsRuleVersion(batchRepo, cfg.Analytics.ApprovedRuleVersion)
