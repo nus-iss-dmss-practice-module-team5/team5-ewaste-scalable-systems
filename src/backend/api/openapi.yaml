@@ -165,6 +165,123 @@ paths:
               $ref: '#/components/headers/CorrelationId'
         '401': {$ref: '#/components/responses/InvalidSession'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/register:
+    post:
+      tags: [Authentication]
+      summary: Self-register a donor, collector or processor account
+      operationId: register
+      security: []
+      description: >-
+        Creates one organisation and one user. DONOR accounts are ACTIVE at once.
+        COLLECTOR and RECYCLER accounts stay PENDING, and cannot log in, until a
+        System Administrator approves them. Platform roles cannot self-register.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              email: ops@newcollect.example
+              password: example-password
+              display_name: New Collect Operator
+              role: COLLECTOR
+              organisation_name: New Collect SG
+      responses:
+        '201':
+          description: Registration recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlation_id]
+                properties:
+                  data: {$ref: '#/components/schemas/RegistrationResponse'}
+                  correlation_id: {type: string}
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409': {$ref: '#/components/responses/RegistrationConflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/registrations:
+    get:
+      tags: [Authentication]
+      summary: List registrations awaiting approval
+      operationId: listPendingRegistrations
+      description: SYSTEM_ADMIN only. Oldest first, at most 200 rows.
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Pending registrations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlation_id]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/PendingRegistration'}
+                  correlation_id: {type: string}
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/registrations/{user_id}/approve:
+    post:
+      tags: [Authentication]
+      summary: Approve a pending registration
+      operationId: approveRegistration
+      description: SYSTEM_ADMIN only. Activates the user and its organisation and records the reviewer. A registration is decided once.
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - {name: user_id, in: path, required: true, schema: {type: string, maxLength: 32}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegistrationDecisionRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/RegistrationDecided'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/RegistrationConflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/registrations/{user_id}/reject:
+    post:
+      tags: [Authentication]
+      summary: Reject a pending registration
+      operationId: rejectRegistration
+      description: SYSTEM_ADMIN only. Disables the user and marks the organisation REJECTED; both rows are kept for audit.
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - {name: user_id, in: path, required: true, schema: {type: string, maxLength: 32}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegistrationDecisionRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/RegistrationDecided'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/RegistrationConflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/batches:
     get:
       tags: [Batches]
@@ -1484,6 +1601,49 @@ components:
         page_size: {type: integer, minimum: 1}
         total_count: {type: integer, minimum: 0}
         correlation_id: {type: string}
+    RegisterRequest:
+      type: object
+      required: [email, password, display_name, role, organisation_name]
+      properties:
+        email: {type: string, format: email, maxLength: 254}
+        password: {type: string, minLength: 8, maxLength: 72, format: password}
+        display_name: {type: string, maxLength: 120}
+        role: {type: string, enum: [DONOR, COLLECTOR, RECYCLER]}
+        organisation_name: {type: string, maxLength: 160}
+    RegistrationResponse:
+      type: object
+      required: [user_id, organisation_id, role, status]
+      properties:
+        user_id: {type: string}
+        organisation_id: {type: string}
+        role: {type: string, enum: [DONOR, COLLECTOR, RECYCLER]}
+        status: {type: string, enum: [ACTIVE, PENDING]}
+    PendingRegistration:
+      type: object
+      required: [user_id, email, display_name, role, organisation_id, organisation_name, organisation_type, registered_at]
+      properties:
+        user_id: {type: string}
+        email: {type: string}
+        display_name: {type: string}
+        role: {type: string, enum: [COLLECTOR, RECYCLER]}
+        organisation_id: {type: string}
+        organisation_name: {type: string}
+        organisation_type: {type: string, enum: [COLLECTION_OPERATOR, PROCESSING_FACILITY]}
+        registered_at: {type: string, format: date-time}
+    RegistrationDecisionRequest:
+      type: object
+      properties:
+        reason: {type: string, maxLength: 255}
+    RegistrationDecision:
+      type: object
+      required: [user_id, organisation_id, decision, status, reviewed_by, reviewed_at]
+      properties:
+        user_id: {type: string}
+        organisation_id: {type: string}
+        decision: {type: string, enum: [APPROVED, REJECTED]}
+        status: {type: string, enum: [ACTIVE, DISABLED]}
+        reviewed_by: {type: string}
+        reviewed_at: {type: string, format: date-time}
     ErrorResponse:
       type: object
       required: [code, message, correlation_id]
@@ -1503,6 +1663,29 @@ components:
         mysql: {type: string, enum: [ok, unavailable]}
         redis: {type: string, enum: [ok, unavailable]}
   responses:
+    RegistrationDecided:
+      description: Registration decided
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, correlation_id]
+            properties:
+              data: {$ref: '#/components/schemas/RegistrationDecision'}
+              correlation_id: {type: string}
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    RegistrationConflict:
+      description: The email or organisation name is already registered, or the registration was already decided.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: REGISTRATION_CONFLICT
+            message: the account, organisation or registration decision already exists
+            correlation_id: corr-registration-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
     BadRequest:
       description: Missing or malformed request.
       content:

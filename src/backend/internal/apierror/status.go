@@ -18,7 +18,7 @@ func Status(code Code) int {
 		return http.StatusUnprocessableEntity
 	case RateLimited:
 		return http.StatusTooManyRequests
-	case Conflict, IdempotencyConflict:
+	case Conflict, IdempotencyConflict, RegistrationConflict:
 		return http.StatusConflict
 	default:
 		return http.StatusServiceUnavailable

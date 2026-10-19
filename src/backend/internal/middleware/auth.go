@@ -79,3 +79,22 @@ func abortDependency(c *gin.Context) {
 var now = func() time.Time {
 	return time.Now().UTC()
 }
+
+// RequireRole must run after RequireAccessTokens. It admits only the listed
+// role codes and answers FORBIDDEN otherwise.
+func RequireRole(roleCodes ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims, ok := ClaimsFromContext(c)
+		if !ok {
+			abortAuth(c)
+			return
+		}
+		for _, roleCode := range roleCodes {
+			if strings.EqualFold(claims.RoleCode, roleCode) {
+				c.Next()
+				return
+			}
+		}
+		response.Error(c, apierror.Forbidden, GetCorrelationID(c))
+	}
+}

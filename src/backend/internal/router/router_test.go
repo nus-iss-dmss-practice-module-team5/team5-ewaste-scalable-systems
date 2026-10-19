@@ -309,6 +309,7 @@ func TestServiceRoutersRegisterOnlyOwnedRoutes(t *testing.T) {
 	batchService := service.NewBatchService(repository.NewGormBatchRepository(nil))
 	deps := ServiceDependencies{
 		AuthController:         controller.NewAuthController(service.NewAuthService(repo, tokens, logger), logger),
+		RegistrationController: controller.NewRegistrationController(service.NewRegistrationService(repository.NewGormRegistrationRepository(nil)), logger),
 		BatchController:        controller.NewBatchController(batchService, logger),
 		EvidenceController:     controller.NewEvidenceController(nil, logger),
 		ClaimController:        controller.NewClaimController(service.NewClaimWorkflowService(repository.NewGormClaimRepository(nil), nil), logger),
@@ -331,26 +332,26 @@ func TestServiceRoutersRegisterOnlyOwnedRoutes(t *testing.T) {
 		{
 			name:        "identity",
 			service:     IdentityAccessService,
-			mustHave:    []string{"POST /v1/auth/login", "POST /v1/auth/refresh", "POST /v1/auth/logout"},
+			mustHave:    []string{"POST /v1/auth/login", "POST /v1/auth/refresh", "POST /v1/auth/logout", "POST /v1/auth/register", "GET /v1/auth/registrations", "POST /v1/auth/registrations/:user_id/approve", "POST /v1/auth/registrations/:user_id/reject"},
 			mustNotHave: []string{"POST /v1/batches", "POST /v1/claims/batches/:batch_id", "POST /v1/custody/assignments/:assignment_id/handoff"},
 		},
 		{
 			name:        "batch workflow",
 			service:     BatchWorkflowService,
 			mustHave:    []string{"POST /v1/batches", "POST /v1/batches/:batch_id/submit", "GET /v1/opportunities", "POST /internal/v1/analytics/batches/:batch_id/results"},
-			mustNotHave: []string{"POST /v1/claims/batches/:batch_id", "POST /v1/logistics/assignments/:assignment_id/fail", "POST /v1/custody/assignments/:assignment_id/handoff"},
+			mustNotHave: []string{"POST /v1/claims/batches/:batch_id", "POST /v1/auth/register", "POST /v1/logistics/assignments/:assignment_id/fail", "POST /v1/custody/assignments/:assignment_id/handoff"},
 		},
 		{
 			name:        "claim logistics",
 			service:     ClaimLogisticsService,
 			mustHave:    []string{"POST /v1/claims/batches/:batch_id", "POST /v1/logistics/assignments/batches/:batch_id", "POST /v1/logistics/assignments/:assignment_id/fail"},
-			mustNotHave: []string{"POST /v1/batches", "POST /v1/custody/assignments/:assignment_id/handoff", "POST /internal/v1/analytics/batches/:batch_id/results"},
+			mustNotHave: []string{"POST /v1/auth/register", "POST /v1/batches", "POST /v1/custody/assignments/:assignment_id/handoff", "POST /internal/v1/analytics/batches/:batch_id/results"},
 		},
 		{
 			name:        "custody verification",
 			service:     CustodyVerificationService,
 			mustHave:    []string{"POST /v1/custody/assignments/:assignment_id/handoff", "POST /v1/processing/batches/:batch_id/receipt", "POST /v1/evidence/batches/:batch_id", "GET /v1/audit/impact"},
-			mustNotHave: []string{"POST /v1/batches", "POST /v1/claims/batches/:batch_id", "POST /v1/logistics/assignments/:assignment_id/fail"},
+			mustNotHave: []string{"POST /v1/auth/register", "POST /v1/batches", "POST /v1/claims/batches/:batch_id", "POST /v1/logistics/assignments/:assignment_id/fail"},
 		},
 	}
 
