@@ -2057,7 +2057,7 @@ resource "azurerm_container_app" "analytics" {
 # 11. SCALE-DOWN COOLDOWN CONFIGURATION (RAPID SCALE-IN FOR DEMO & TESTING)
 # ============================================================================
 
-resource "azapi_update_resource" "scale_cooldown" {
+resource "azapi_resource_action" "scale_cooldown" {
   for_each = {
     api             = azurerm_container_app.api.id
     ui              = azurerm_container_app.ui.id
@@ -2070,6 +2070,7 @@ resource "azapi_update_resource" "scale_cooldown" {
 
   type        = "Microsoft.App/containerApps@2024-03-01"
   resource_id = each.value
+  method      = "PATCH"
 
   body = {
     properties = {
