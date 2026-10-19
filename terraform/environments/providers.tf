@@ -47,6 +47,9 @@ provider "azapi" {}
 locals {
   name_prefix = "ewastescalable-${var.environment}"
 
+  # Identity issues user tokens; every API must validate the same issuer.
+  auth_issuer = "ewaste-identity-access"
+
   common_tags = {
     Project     = "Responsible E-Waste Chain-of-Custody"
     Environment = var.environment

@@ -519,7 +519,7 @@ resource "azurerm_container_app" "auth" {
 
       env {
         name  = "EWASTE_AUTH_ISSUER"
-        value = "ewaste-identity-access"
+        value = local.auth_issuer
       }
 
       env {
@@ -743,7 +743,7 @@ resource "azurerm_container_app" "api" {
 
       env {
         name  = "EWASTE_AUTH_ISSUER"
-        value = "ewaste-workflow-api"
+        value = local.auth_issuer
       }
 
       env {
@@ -1120,7 +1120,7 @@ resource "azurerm_container_app" "claim" {
 
       env {
         name  = "EWASTE_AUTH_ISSUER"
-        value = "ewaste-claim-logistics"
+        value = local.auth_issuer
       }
 
       env {
@@ -1350,7 +1350,7 @@ resource "azurerm_container_app" "custody" {
 
       env {
         name  = "EWASTE_AUTH_ISSUER"
-        value = "ewaste-custody-verification"
+        value = local.auth_issuer
       }
 
       env {

@@ -91,6 +91,18 @@ run "matcher_configuration_survives_iac" {
   }
 }
 
+run "shared_user_token_issuer" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for app in [azurerm_container_app.auth, azurerm_container_app.api, azurerm_container_app.claim, azurerm_container_app.custody] :
+      one([for e in app.template[0].container[0].env : e.value if e.name == "EWASTE_AUTH_ISSUER"]) == "ewaste-identity-access"
+    ])
+    error_message = "All user-facing APIs must trust the identity service's JWT issuer; service-specific issuers reject valid login tokens."
+  }
+}
+
 run "reject_short_matcher_key" {
   command = plan
   variables {
