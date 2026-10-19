@@ -51,7 +51,7 @@ jobs:
   # The self-hosted runner has no gh CLI, so check for active runs on a hosted runner.
   guard:
     name: Refuse to Run During a Deployment
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[run-ewss-32]')
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[run-ewss-32')
     runs-on: ubuntu-latest
     steps:
       - name: Check for Active Deployments
@@ -82,10 +82,22 @@ jobs:
       TARGET_ENV: ${{ inputs.target_env || 'prod' }}
       RESOURCE_GROUP: rg-ewastescalable-${{ inputs.target_env || 'prod' }}
       CASES: ${{ inputs.cases || 'RS-10,RS-04,RS-01,RS-08' }}
+      COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
       RECONCILE: ${{ inputs.reconcile || 'api' }}
     steps:
       - name: Checkout Code Repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve Cases
+        # On a push run, "[run-ewss-32 cases=RS-10,RS-04]" limits the cases.
+        run: |
+          set -euo pipefail
+          if [[ "$COMMIT_MESSAGE" =~ \[run-ewss-32\ cases=([A-Za-z0-9,-]+)\] ]]; then
+            echo "CASES=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+            echo "Cases from the commit message: ${BASH_REMATCH[1]}"
+          else
+            echo "Cases: $CASES"
+          fi
 
       - name: Authenticate to Microsoft Azure
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2

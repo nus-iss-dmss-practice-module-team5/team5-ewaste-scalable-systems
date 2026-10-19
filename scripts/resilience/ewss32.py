@@ -36,7 +36,9 @@ from confluent_kafka.admin import AdminClient
 APP_SUFFIXES = ("auth", "api", "claim", "custody", "ui", "matcher", "analytic")
 BATCH_TOPIC = "ewaste.batch.events"
 DLQ_TOPIC = "ewaste.batch.events.matching.dlq.v1"
-MATCHING_GROUP = "matching-worker-v1"
+# The deployed matcher logs consumer_group "matching-worker"; Terraform also
+# creates "matching-worker-v1". Offsets are read from whichever group has them.
+MATCHING_GROUPS = ("matching-worker", "matching-worker-v1")
 # Partition counts provisioned by terraform/environments/main.tf.
 EXPECTED_PARTITIONS = {
     "ewaste.batch.events": 3,
@@ -363,6 +365,16 @@ class Harness:
         result = admin.list_consumer_group_offsets([request], request_timeout=30)[group].result()
         return {tp.partition: tp.offset for tp in result.topic_partitions}
 
+    def matching_offsets(self, partitions):
+        """Committed offsets of the first matching group that has any, with the group's name."""
+        tried = {}
+        for group in MATCHING_GROUPS:
+            offsets = self.committed(BATCH_TOPIC, group, partitions)
+            tried[group] = offsets
+            if any(o is not None and o >= 0 for o in offsets.values()):
+                return group, offsets, tried
+        return None, {}, tried
+
     def watermarks(self, topic, partitions):
         consumer = Consumer(self.env.kafka(**{"group.id": f"ewss32-probe-{self.run_id}",
                                               "enable.auto.commit": False}))
@@ -381,25 +393,27 @@ class Harness:
                                     "--query", "partitionCount")
             case.check(f"partitions {topic}", counts[topic] == expected,
                        f"{counts[topic]} provisioned, {expected} expected")
-        partitions = range(EXPECTED_PARTITIONS[BATCH_TOPIC])
-        lag = None
+        partitions = list(range(EXPECTED_PARTITIONS[BATCH_TOPIC]))
+        lag, group, tried = None, None, {}
         for _ in range(6):
             try:
-                committed = self.committed(BATCH_TOPIC, MATCHING_GROUP, partitions)
+                group, committed, tried = self.matching_offsets(partitions)
                 ends = self.watermarks(BATCH_TOPIC, partitions)
             except Exception as exc:
                 case.save("kafka-lag", {"error": str(exc)})
                 return case.finish(None if not all(c["passed"] for c in case.checks) else "INCONCLUSIVE",
                                    f"partition counts checked; lag unreadable: {exc}")
+            # A partition with no committed offset and no messages has nothing to drain.
             lag = {p: {"committed": committed.get(p), "end": ends[p][1],
-                       "lag": ends[p][1] - committed[p] if committed.get(p, -1) >= 0 else None}
+                       "lag": (ends[p][1] - committed[p]) if (committed.get(p) or -1) >= 0
+                       else (0 if ends[p][1] == 0 else None)}
                    for p in partitions}
             if all(v["lag"] == 0 for v in lag.values()):
                 break
             time.sleep(10)
-        case.save("kafka-lag", {"group": MATCHING_GROUP, "topic": BATCH_TOPIC, "partitions": lag})
+        case.save("kafka-lag", {"group": group, "groups_tried": tried, "topic": BATCH_TOPIC, "partitions": lag})
         case.check("matching group drained", all(v["lag"] == 0 for v in lag.values()),
-                   ", ".join(f"p{p} lag {v['lag']}" for p, v in lag.items()))
+                   f"group {group}: " + ", ".join(f"p{p} lag {v['lag']}" for p, v in lag.items()))
         return case.finish()
 
     def rs04(self, case):
@@ -460,14 +474,15 @@ class Harness:
             decided = [e for e in events if e.get("event_type") == "MatchingCompleted"]
             case.check("S4 (API) no matching decision recorded", not decided,
                        f"{len(decided)} MatchingCompleted audit event(s) for the poison batch")
-        offset = None
+        offset, group = None, None
         for _ in range(12):
-            offset = self.committed(BATCH_TOPIC, MATCHING_GROUP, [delivered["partition"]]).get(delivered["partition"])
+            group, offsets, _tried = self.matching_offsets([delivered["partition"]])
+            offset = offsets.get(delivered["partition"])
             if offset is not None and offset > delivered["offset"]:
                 break
             time.sleep(10)
         case.check("partition committed past the poison", offset is not None and offset > delivered["offset"],
-                   f"committed offset {offset}, poison offset {delivered['offset']}")
+                   f"group {group}: committed offset {offset}, poison offset {delivered['offset']}")
         self.container_logs(case, "matcher")
         return case.finish()
 
