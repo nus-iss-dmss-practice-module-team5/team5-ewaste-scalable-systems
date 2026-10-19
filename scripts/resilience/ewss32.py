@@ -1,8 +1,12 @@
 """EWSS-32: restart a replica under load, replay an event and send a poison event.
 
 Runs the EWSS-18 cases RS-10, RS-04, RS-01 and RS-08 against a deployed
-environment and reconciles each one in MySQL. It must run inside the Azure
-VNet (the self-hosted runner), because MySQL has no public endpoint.
+environment and reconciles each one. With --reconcile sql it reads MySQL,
+which is private, so it must run inside the Azure VNet (the self-hosted
+runner). With --reconcile api it runs from anywhere and reconciles through
+the public API instead: the auditor timeline (every matching decision writes
+a MatchingCompleted audit row in the same transaction), the donor's batch
+list, and idempotent replays of every command.
 
 Every case writes one evidence folder: steps with UTC times, an HTTP log,
 the SQL text with its results, Kafka records, container logs and a
@@ -57,7 +61,7 @@ def redact(text):
 
 
 class Env:
-    def __init__(self):
+    def __init__(self, reconcile):
         get = os.environ.get
         self.target = get("TARGET_ENV", "prod")
         self.rg = get("RESOURCE_GROUP", f"rg-ewastescalable-{self.target}")
@@ -68,12 +72,15 @@ class Env:
         self.evh_connection = get("EVH_CONNECTION_STRING", "")
         self.donor_email = get("DONOR_EMAIL", "donor1@ewaste.test")
         self.donor_password = get("DONOR_PASSWORD", "")
+        self.auditor_email = get("AUDITOR_EMAIL", "auditor@ewaste.test")
+        self.auditor_password = get("AUDITOR_PASSWORD", self.donor_password)
         self.commit = get("GITHUB_SHA", "")
-        missing = [name for name, value in (
-            ("BASE_URL", self.base_url), ("MYSQL_HOST", self.mysql["host"]),
-            ("MYSQL_USER", self.mysql["user"]), ("MYSQL_PASSWORD", self.mysql["password"]),
-            ("MYSQL_DB", self.mysql["database"]), ("EVH_CONNECTION_STRING", self.evh_connection),
-            ("DONOR_PASSWORD", self.donor_password)) if not value]
+        required = [("BASE_URL", self.base_url), ("EVH_CONNECTION_STRING", self.evh_connection),
+                    ("DONOR_PASSWORD", self.donor_password)]
+        if reconcile == "sql":
+            required += [("MYSQL_HOST", self.mysql["host"]), ("MYSQL_USER", self.mysql["user"]),
+                         ("MYSQL_PASSWORD", self.mysql["password"]), ("MYSQL_DB", self.mysql["database"])]
+        missing = [name for name, value in required if not value]
         if missing:
             sys.exit(f"missing environment: {', '.join(missing)}")
 
@@ -126,8 +133,8 @@ class Case:
 
 
 class Harness:
-    def __init__(self, env, out, run_id):
-        self.env, self.out, self.run_id = env, out, run_id
+    def __init__(self, env, out, run_id, reconcile):
+        self.env, self.out, self.run_id, self.reconcile = env, out, run_id, reconcile
         self.started = utc()
         self._db = None
 
@@ -244,12 +251,34 @@ class Harness:
                    "idempotency_key": hdrs.get("Idempotency-Key"), "error": error})
         return status, parsed
 
-    def login(self, case):
-        status, body = self.call(case, "POST", "/api/v1/auth/login",
-                                 body={"email": self.env.donor_email, "password": self.env.donor_password})
+    def login(self, case, auditor=False):
+        email = self.env.auditor_email if auditor else self.env.donor_email
+        password = self.env.auditor_password if auditor else self.env.donor_password
+        status, body = self.call(case, "POST", "/api/v1/auth/login", body={"email": email, "password": password})
         if status != 200 or not body or not body.get("access_token"):
-            raise RuntimeError(f"donor login failed with HTTP {status}")
+            raise RuntimeError(f"{'auditor' if auditor else 'donor'} login failed with HTTP {status}")
         return body["access_token"]
+
+    def timeline(self, case, token, batch_id):
+        status, body = self.call(case, "GET", f"/api/v1/audit/batches/{batch_id}/timeline?page_size=100", token)
+        if status == 404:
+            return []
+        if status != 200:
+            raise RuntimeError(f"audit timeline for {batch_id} returned HTTP {status}")
+        return body.get("data") or []
+
+    def tagged_batches(self, case, token, prefix):
+        """Every batch in the donor's list whose notes start with this run's tag."""
+        found, page = [], 1
+        while True:
+            status, body = self.call(case, "GET", f"/api/v1/batches?page={page}&page_size=100", token)
+            if status != 200:
+                raise RuntimeError(f"batch list page {page} returned HTTP {status}")
+            rows = body.get("data") or []
+            found += [r for r in rows if (r.get("notes") or "").startswith(prefix)]
+            if not rows or page * 100 >= body.get("total_count", 0):
+                return found
+            page += 1
 
     @staticmethod
     def draft(notes):
@@ -277,10 +306,10 @@ class Harness:
 
     def create_and_submit(self, case, token, n, submit=True):
         notes = f"{case.tag}:{n}"
+        draft = self.draft(notes)  # built once: a retry must resend the same body with the same key
         status, body, created = self.with_retries(case, f"create {n}", lambda: self.call(
-            case, "POST", "/api/v1/batches", token, self.draft(notes),
-            {"Idempotency-Key": self.key(case, n, "create")}))
-        record = {"n": n, "notes": notes, "create_status": status, "create_attempts": created}
+            case, "POST", "/api/v1/batches", token, draft, {"Idempotency-Key": self.key(case, n, "create")}))
+        record = {"n": n, "notes": notes, "create_status": status, "create_attempts": created, "draft": draft}
         if not 200 <= status < 300:
             return record
         batch = body["data"]
@@ -422,8 +451,15 @@ class Harness:
                        f"source p{record['value'].get('source_partition')} offset "
                        f"{record['value'].get('source_offset')}; keyed by quarantine_id {record['key']}")
 
-        rows = self.sql(case, "s4", S4, (event_id, batch_id))
-        case.check("S4 no matching decision", rows[0]["decisions"] == 0, f"{rows[0]['decisions']} decision(s)")
+        if self.reconcile == "sql":
+            rows = self.sql(case, "s4", S4, (event_id, batch_id))
+            case.check("S4 no matching decision", rows[0]["decisions"] == 0, f"{rows[0]['decisions']} decision(s)")
+        else:
+            events = self.timeline(case, self.login(case, auditor=True), batch_id)
+            case.save("api-s4-timeline", {"batch_id": batch_id, "events": events})
+            decided = [e for e in events if e.get("event_type") == "MatchingCompleted"]
+            case.check("S4 (API) no matching decision recorded", not decided,
+                       f"{len(decided)} MatchingCompleted audit event(s) for the poison batch")
         offset = None
         for _ in range(12):
             offset = self.committed(BATCH_TOPIC, MATCHING_GROUP, [delivered["partition"]]).get(delivered["partition"])
@@ -451,6 +487,14 @@ class Harness:
         if len(submitted) != count:
             return case.finish("INCONCLUSIVE", f"only {len(submitted)} of {count} batches submitted")
         self.wait_running(case, "matcher")
+        if self.reconcile == "sql":
+            self.rs01_sql(case, count)
+        else:
+            self.rs01_api(case, [b["batch_id"] for b in batches])
+        self.container_logs(case, "matcher")
+        return case.finish()
+
+    def rs01_sql(self, case, count):
         deadline, rows = time.monotonic() + 300, []
         while time.monotonic() < deadline:
             rows = self.sql(case, "s1-progress", S1, (case.tag + "%",))
@@ -466,13 +510,41 @@ class Harness:
                    f"{len(rows)} batches; decisions {[r['decisions'] for r in rows]}")
         dupes = self.sql(case, "s2", S2, (case.tag + "%",))
         case.check("S2 one durable event per command", not dupes, f"{len(dupes)} offending row(s)")
-        self.container_logs(case, "matcher")
-        return case.finish()
+
+    def rs01_api(self, case, batch_ids):
+        """S1/S2 through the auditor timeline: one MatchingCompleted per batch, no repeated command."""
+        token = self.login(case, auditor=True)
+        timelines, deadline = {}, time.monotonic() + 300
+        while time.monotonic() < deadline:
+            timelines = {b: self.timeline(case, token, b) for b in batch_ids}
+            if all(any(e.get("event_type") == "MatchingCompleted" for e in t) for t in timelines.values()):
+                break
+            time.sleep(15)
+        case.step("all batches have a decision; waiting 45 s for any redelivered duplicate")
+        time.sleep(45)
+        timelines = {b: self.timeline(case, token, b) for b in batch_ids}
+        case.save("api-timelines", timelines)
+        summary = {}
+        for b, events in timelines.items():
+            decided = [e for e in events if e.get("event_type") == "MatchingCompleted"]
+            summary[b] = {"decisions": len(decided),
+                          "triggers": len({(e.get("details") or {}).get("trigger_id") for e in decided}),
+                          "status": decided[-1].get("to_status") if decided else None}
+        case.save("api-s1", summary)
+        case.check("S1 (API) one decision and one trigger per batch",
+                   all(v["decisions"] == 1 and v["triggers"] == 1 for v in summary.values()),
+                   f"decisions {[v['decisions'] for v in summary.values()]}; outcomes "
+                   f"{sorted({str(v['status']) for v in summary.values()})}")
+        repeated = [(b, e.get("command_id"), e.get("event_type")) for b, events in timelines.items()
+                    for e in events
+                    if sum(1 for x in events if (x.get("command_id"), x.get("event_type"), x.get("sequence_in_command"))
+                           == (e.get("command_id"), e.get("event_type"), e.get("sequence_in_command"))) > 1]
+        case.check("S2 (API) one audit event per command", not repeated, f"{len(repeated)} repeated event(s)")
 
     def rs08(self, case, count=30, restart_after=15):
         """Restart batch-workflow mid-load; retried commands land once, none left IN_PROGRESS."""
         token = self.login(case)
-        window_start = self.identity(case)[0]["db_utc"]
+        window_start = self.identity(case)[0]["db_utc"] if self.reconcile == "sql" else utc()
         timer, restart_errors = self.restart_in_background(case, "api", restart_after)
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
             futures = []
@@ -485,23 +557,50 @@ class Harness:
         if restart_errors:
             return case.finish("INCONCLUSIVE", f"batch-workflow restart failed: {restart_errors[0][:200]}")
         self.wait_running(case, "api")
-        window_end = self.identity(case)[0]["db_utc"]
+        window_end = self.identity(case)[0]["db_utc"] if self.reconcile == "sql" else utc()
         failed = [r for r in results if not 200 <= r["create_status"] < 300]
         retried = [r for r in results if len(r["create_attempts"]) > 1]
         case.check("every command eventually succeeded", not failed,
                    f"{count - len(failed)}/{count} succeeded; {len(retried)} needed a retry")
-        rows = self.sql(case, "duplicates", DUPLICATES, (case.tag + ":%",))
-        case.check("one batch per command (no duplicate durable row)",
-                   len(rows) == count and all(r["n"] == 1 for r in rows),
-                   f"{len(rows)} distinct commands stored, max {max((r['n'] for r in rows), default=0)} row(s) each")
-        stuck = self.sql(case, "s7", S7, (f"ewss32-{self.run_id}-{case.id}-%", window_start, window_end))
-        case.check("S7 no command stuck IN_PROGRESS", not stuck, f"{len(stuck)} row(s)")
-        self.drain_outbox(case)
-        dupes = self.sql(case, "s2", S2, (case.tag + "%",))
-        case.check("S2 one durable event per command", not dupes, f"{len(dupes)} offending row(s)")
+        if self.reconcile == "sql":
+            rows = self.sql(case, "duplicates", DUPLICATES, (case.tag + ":%",))
+            case.check("one batch per command (no duplicate durable row)",
+                       len(rows) == count and all(r["n"] == 1 for r in rows),
+                       f"{len(rows)} distinct commands stored, max {max((r['n'] for r in rows), default=0)} row(s) each")
+            stuck = self.sql(case, "s7", S7, (f"ewss32-{self.run_id}-{case.id}-%", window_start, window_end))
+            case.check("S7 no command stuck IN_PROGRESS", not stuck, f"{len(stuck)} row(s)")
+            self.drain_outbox(case)
+            dupes = self.sql(case, "s2", S2, (case.tag + "%",))
+            case.check("S2 one durable event per command", not dupes, f"{len(dupes)} offending row(s)")
+        else:
+            self.rs08_api(case, token, results, count)
         self.container_logs(case, "api")
         note = "" if retried else "no request failed during the restart; the restart may not have hit in-flight work"
         return case.finish(note=note)
+
+    def rs08_api(self, case, token, results, count):
+        """No duplicate and nothing stuck, through the API: replay every key, then list the tagged batches."""
+        mismatched = []
+        for r in results:
+            if not 200 <= r["create_status"] < 300:
+                continue
+            status, body = self.call(case, "POST", "/api/v1/batches", token, r["draft"],
+                                     {"Idempotency-Key": self.key(case, r["n"], "create")})
+            replay_id = ((body or {}).get("data") or {}).get("batch_id")
+            if not 200 <= status < 300 or replay_id != r["batch_id"]:
+                mismatched.append({"n": r["n"], "status": status, "original": r["batch_id"], "replay": replay_id})
+        case.save("api-replays", {"mismatched": mismatched})
+        # A replay that returns the stored response proves the command reached COMPLETED (S7 for these keys).
+        case.check("S7 (API) every key replays its stored response", not mismatched,
+                   f"{count - len(mismatched)}/{count} replays returned the original batch")
+        stored = self.tagged_batches(case, token, case.tag + ":")
+        case.save("api-duplicates", [{"batch_id": b["batch_id"], "notes": b.get("notes")} for b in stored])
+        per_command = {}
+        for b in stored:
+            per_command[b["notes"]] = per_command.get(b["notes"], 0) + 1
+        case.check("one batch per command (no duplicate durable row)",
+                   len(per_command) == count and all(v == 1 for v in per_command.values()),
+                   f"{len(per_command)} distinct commands stored, max {max(per_command.values(), default=0)} each")
 
 
 S1 = """SELECT b.id, b.status, COUNT(d.id) AS decisions, COUNT(DISTINCT d.trigger_id) AS triggers
@@ -534,6 +633,8 @@ def main(argv=None):
     parser.add_argument("--cases", default="RS-10,RS-04,RS-01,RS-08")
     parser.add_argument("--out", default="artifacts/ewss-32")
     parser.add_argument("--run-id", default=dt.datetime.now(dt.timezone.utc).strftime("r%Y%m%dt%H%M"))
+    parser.add_argument("--reconcile", choices=("sql", "api"), default="sql",
+                        help="sql reads private MySQL (VNet runner only); api reconciles through the public API")
     args = parser.parse_args(argv)
     cases = [c.strip().upper() for c in args.cases.split(",") if c.strip()]
     unknown = [c for c in cases if c not in CASES]
@@ -542,10 +643,13 @@ def main(argv=None):
 
     root = Path(args.out) / args.run_id
     root.mkdir(parents=True, exist_ok=True)
-    harness = Harness(Env(), root, args.run_id)
+    harness = Harness(Env(args.reconcile), root, args.run_id, args.reconcile)
     setup = Case(root, "run", args.run_id)
-    harness.identity(setup)
-    setup.save("manifest", harness.manifest(setup))
+    if args.reconcile == "sql":
+        harness.identity(setup)
+    manifest = harness.manifest(setup)
+    manifest["reconcile"] = args.reconcile
+    setup.save("manifest", manifest)
 
     results = []
     for case_id in cases:
@@ -558,7 +662,9 @@ def main(argv=None):
             results.append(case.finish("INCONCLUSIVE", f"harness error: {redact(str(exc))[:300]}"))
 
     lines = [f"## EWSS-32 resilience run {args.run_id}", "",
-             f"Commit `{harness.env.commit[:7]}` on `{harness.env.target}`. Evidence: one folder per case.", "",
+             f"Commit `{harness.env.commit[:7]}` on `{harness.env.target}`, reconciled through "
+             f"{'MySQL' if args.reconcile == 'sql' else 'the public API (auditor timeline, batch list, idempotent replays)'}."
+             " Evidence: one folder per case.", "",
              "| Case | Verdict | Checks |", "| --- | --- | --- |"]
     for r in results:
         passed = sum(c["passed"] for c in r["checks"])

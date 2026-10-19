@@ -1,7 +1,9 @@
 name: Resilience - Restart, Replay and Poison (EWSS-32)
 
 # Runs the EWSS-18 cases RS-10, RS-04, RS-01 and RS-08 against a deployed
-# environment and keeps the evidence. It restarts container app revisions
+# environment and keeps the evidence. reconcile=api (the default) runs on a
+# hosted runner and reconciles through the public API; reconcile=sql runs on
+# the VNet runner and reads MySQL directly. It restarts container app revisions
 # and adds tagged test batches, so run it only in an agreed window.
 #
 # A workflow_dispatch workflow must exist on the default branch before it can
@@ -23,6 +25,14 @@ on:
         description: 'Comma-separated EWSS-18 cases (RS-10, RS-04, RS-01, RS-08)'
         required: false
         default: 'RS-10,RS-04,RS-01,RS-08'
+      reconcile:
+        description: 'api = reconcile through the public API on a hosted runner; sql = read private MySQL from the VNet runner'
+        required: true
+        default: 'api'
+        type: choice
+        options:
+          - api
+          - sql
   push:
     branches: [feature/EWSS-32-resilience-tests]
     paths:
@@ -64,14 +74,15 @@ jobs:
   resilience:
     name: EWSS-32 Resilience (${{ inputs.target_env || 'prod' }})
     needs: [guard]
-    # MySQL is private, so the SQL checks must run inside the VNet.
-    runs-on: [self-hosted, azure-vnet, "${{ inputs.target_env || 'prod' }}"]
+    # SQL reconciliation needs the VNet runner (MySQL is private); API reconciliation runs anywhere.
+    runs-on: ${{ (inputs.reconcile || 'api') == 'sql' && fromJSON(format('["self-hosted","azure-vnet","{0}"]', inputs.target_env || 'prod')) || 'ubuntu-latest' }}
     environment: ${{ inputs.target_env || 'prod' }}
     timeout-minutes: 45
     env:
       TARGET_ENV: ${{ inputs.target_env || 'prod' }}
       RESOURCE_GROUP: rg-ewastescalable-${{ inputs.target_env || 'prod' }}
       CASES: ${{ inputs.cases || 'RS-10,RS-04,RS-01,RS-08' }}
+      RECONCILE: ${{ inputs.reconcile || 'api' }}
     steps:
       - name: Checkout Code Repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -114,8 +125,9 @@ jobs:
           # Same synthetic seed account and fallback as the CD smoke test (database/README.md).
           DONOR_EMAIL: donor1@ewaste.test
           DONOR_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD || 'TestOnly#2026!' }}
+          AUDITOR_EMAIL: auditor@ewaste.test
           RUN_ID: r${{ github.run_id }}
-        run: python scripts/resilience/ewss32.py --cases "$CASES" --run-id "$RUN_ID" --out artifacts/ewss-32
+        run: python scripts/resilience/ewss32.py --cases "$CASES" --reconcile "$RECONCILE" --run-id "$RUN_ID" --out artifacts/ewss-32
 
       - name: Publish Run Summary
         if: always()
