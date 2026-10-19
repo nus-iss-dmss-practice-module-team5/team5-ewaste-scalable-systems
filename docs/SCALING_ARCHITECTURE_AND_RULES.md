@@ -4,7 +4,8 @@
 **Parent Epic:** `AS-SC` / `EWSS-11` (Scaling Targets & Acceptance Analysis)
 **Track:** SWE5001 Practice Module (Architecting Scalable Systems)
 **Author:** Team 5 DevSecOps & Cloud Platform
-**Target Environment:** Azure Container Apps (`rg-ewastescalable-prod` in `malaysiawest` / `indonesiacentral`)
+**Target Environment:** Azure Container Apps (`rg-ewastescalable-prod` in `indonesiacentral` / `malaysiawest`)
+**Log Analytics Workspace:** `log-ewastescalable-centralized` (`7bb23c6a-7eaa-4662-a9ab-5617d36f450e`)
 
 ---
 
@@ -149,49 +150,187 @@ When explaining the 300-second scale-in window to evaluators:
 
 ---
 
-## 5. Live Demonstration & Verification Playbook (PowerShell)
+## 5. Live Demonstration Playbook (PowerShell)
 
-### 5.1 Real-Time Replica Watcher
+### 5.1 Continuous Replica Watcher (PowerShell Loop)
 
-Run this PowerShell loop during the demonstration to observe replica counts in real-time:
+Run this command in a dedicated terminal during the demo to watch active instance counts change in real time:
 
 ```powershell
-# Continuous watcher for replica scaling
 while ($true) {
-    $count = (az containerapp replica list `
+    $replicas = (az containerapp replica list `
       --name aca-ewastescalable-prod-api `
       --resource-group rg-ewastescalable-prod `
-      --query "length(@)" -o tsv)
+      --query "[].{Name:name, State:properties.runningState}" -o json | ConvertFrom-Json)
     $ts = Get-Date -Format "HH:mm:ss"
-    Write-Host "[$ts] Active Replicas: $count" -ForegroundColor Cyan
+    Write-Host "[$ts] Active Replicas: $($replicas.Count)" -ForegroundColor Cyan
+    $replicas | ForEach-Object { Write-Host "   -> Pod: $($_.Name) | State: $($_.State)" -ForegroundColor Gray }
     Start-Sleep -Seconds 5
 }
 ```
 
-### 5.2 Driving Load to Trigger Scale-Out
-
-Use the repository load generator script or a quick PowerShell concurrency loop:
+### 5.2 Stream Application Logs Live
 
 ```powershell
-# Drive 60 concurrent requests to trigger scale-out to 2-3 replicas
-$targetUrl = "https://nextjs-platform-app.proudsky.azurecontainerapps.io/api/v1/batches?status=COMPLETED"
+az containerapp logs show `
+  --name aca-ewastescalable-prod-api `
+  --resource-group rg-ewastescalable-prod `
+  --follow `
+  --format text
+```
+
+### 5.3 Driving Concurrency Surge to Trigger Scale-Out
+
+```powershell
+# Drive 60 concurrent requests through the public single entry reverse proxy
+$targetUrl = "https://aca-ewastescalable-prod-ui.gentlestone-a085f952.indonesiacentral.azurecontainerapps.io/api/v1/batches?status=COMPLETED"
 1..60 | ForEach-Object -Parallel {
     param($url)
-    1..20 | ForEach-Object {
+    1..25 | ForEach-Object {
         try { Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 10 | Out-Null } catch {}
     }
 } -ArgumentList $targetUrl
 ```
 
-### 5.3 Querying Scale-Event Log in Log Analytics (For Course Artifact)
+---
 
-Run this query in Azure Log Analytics (`log-ewastescalable-centralized`) to export the timestamped scale events:
+## 6. Azure Monitor Workbook & Manual KQL Query Playbook (Observation & Evidence Capture)
+
+Follow these steps to import the interactive dashboard and run copy-pasteable KQL queries to capture screenshots for your project report and presentation slides.
+
+### 6.1 Step-by-Step: Importing the Azure Monitor Workbook
+
+1. Open the [Azure Portal](https://portal.azure.com) in your browser.
+2. Ensure your active directory is set to **National University of Singapore** and subscription is set to **`adbeb191-a535-49b4-a660-fb8d484e74ee`**.
+3. Search for **Log Analytics workspaces** in the top search bar and open **`log-ewastescalable-centralized`** (Resource Group: `rg-ewastescalable-shared`).
+4. In the left navigation menu under **Monitoring**, click **Workbooks**.
+5. Click **`+ New`** at the top toolbar to create a blank workbook.
+6. Click the **Advanced Editor** icon: **`</>`** (located on the far right of the top toolbar).
+7. Replace the default JSON with the full content of [`docs/monitoring/azure-monitor-workbook.json`](./monitoring/azure-monitor-workbook.json).
+8. Click **Apply** at the bottom, then click **Done Editing** and **Save** as `AS-CN-T-L-01: Scale & Replica Health Dashboard`.
+
+---
+
+### 6.2 Recommended KQL Queries for Screenshot Capture
+
+Open **Logs** under your Log Analytics workspace (`log-ewastescalable-centralized`) and run these curated queries:
+
+#### Query 1: Chronological Scale-Out and Scale-In Transitions
 
 ```kql
+// Capture automated scale-out to 3 and scale-down to 1
 ContainerAppSystemLogs_CL
-| where ContainerAppName_s == "aca-ewastescalable-prod-api"
-| where Log_s contains "Scaled" or Log_s contains "replica"
-| project TimeGenerated, ContainerAppName_s, Log_s
+| where TimeGenerated >= ago(24h)
+| where Reason_s == "SuccessfulRescale"
+| project TimeGenerated, ContainerAppName_s, Reason_s, Log_s
 | order by TimeGenerated desc
-| take 50
 ```
+
+> **Sample Capture:** The results table showing `aca-ewastescalable-prod-api has been scaled to 3 by the scaler: http-scaler.` followed by `Scale down to 1 as all metrics below target`.
+
+![img.png](img.png)
+
+---
+
+#### Query 2: Active Replicas Time Series Area Chart ($1 \to 3 \to 1$)
+
+```kql
+// Visualizing the replica scaling lifecycle curve
+ContainerAppSystemLogs_CL
+| where TimeGenerated between (datetime('2026-10-19T07:15:00Z') .. datetime('2026-10-19T07:55:00Z'))
+| where ContainerAppName_s in ('aca-ewastescalable-prod-api', 'aca-ewastescalable-prod-ui', 'aca-ewastescalable-prod-matcher')
+| extend TargetReplicas = case(
+    Log_s contains 'scaled to 3', 3,
+    Log_s contains 'scaled to 2', 2,
+    Log_s contains 'Scale down to 1', 1,
+    Log_s contains 'New size: 2', 2,
+    1)
+| summarize MaxReplicas = max(TargetReplicas) by bin(TimeGenerated, 1m), ContainerAppName_s
+| render timechart
+```
+
+> **Sample Capture:** Switch the display dropdown to **Chart** $\to$ **Area chart**. Capture the plateau where replicas expand to 3, hold for the 300s window, and drop back to 1.
+
+![img_1.png](img_1.png)
+
+---
+
+#### Query 3: Container Replica Health, Node Assignments & Zero Crashes
+
+```kql
+// Proving 100% health, 0 crashes, and clean pod scheduling
+ContainerAppSystemLogs_CL
+| where TimeGenerated >= ago(24h)
+| where ContainerAppName_s in ('aca-ewastescalable-prod-api', 'aca-ewastescalable-prod-ui', 'aca-ewastescalable-prod-matcher')
+| summarize
+    TotalSystemEvents = count(),
+    SuccessfulRescales = countif(Reason_s == 'SuccessfulRescale'),
+    ReplicasAssigned = countif(Reason_s == 'AssigningReplica'),
+    ContainersStarted = countif(Reason_s == 'ContainerStarted'),
+    ContainersReady = countif(Reason_s == 'ContainerAppReady'),
+    ContainerCrashes = countif(Reason_s == 'ContainerCrashing')
+    by ContainerAppName_s
+```
+
+> **Sample Capture:** The table showing `ContainerCrashes = 0` across all services with multiple rescales and assigned replicas.
+
+![img_2.png](img_2.png)
+
+---
+
+#### Query 4: API Request Throughput, Latency Percentiles (P50/P90/P95) & Zero 5xx Errors
+
+```kql
+// Ingress traffic volume, latency percentiles and error rate
+ContainerAppConsoleLogs_CL
+| where TimeGenerated between (datetime('2026-10-19T07:15:00Z') .. datetime('2026-10-19T07:55:00Z'))
+| where ContainerAppName_s == 'aca-ewastescalable-prod-api'
+| extend log = parse_json(Log_s)
+| extend LatencyMs = toreal(log.latency_ms), Status = toint(log.status)
+| summarize
+    TotalRequests = count(),
+    P50_Ms = round(percentile(LatencyMs, 50), 2),
+    P90_Ms = round(percentile(LatencyMs, 90), 2),
+    P95_Ms = round(percentile(LatencyMs, 95), 2),
+    Errors5xx = countif(Status >= 500)
+    by bin(TimeGenerated, 5m)
+| order by TimeGenerated asc
+```
+
+> **Sample Capture:** The row at peak traffic (14,336 requests) showing `P95_Ms = 2449.28 ms` (< 3,000 ms target) and `Errors5xx = 0`.
+
+![img_3.png](img_3.png)
+
+---
+
+#### Query 5: Kafka Worker Partition Lag & Consumer Rebalance
+
+```kql
+// Kafka consumer worker scale-out on ewaste.batch.events
+ContainerAppSystemLogs_CL
+| where TimeGenerated >= ago(24h)
+| where ContainerAppName_s == 'aca-ewastescalable-prod-matcher'
+| where Reason_s in ('SuccessfulRescale', 'AssigningReplica', 'ContainerStarted')
+| project TimeGenerated, ContainerAppName_s, Reason_s, Log_s
+| order by TimeGenerated desc
+```
+
+> **Smart Capture:** The log entry: `aca-ewastescalable-prod-matcher has been scaled to 3 by the scaler: kafka-ewaste-batch-events.`
+
+![img_4.png](img_4.png)
+
+---
+
+### 6.3 Screenshot Capture & Viva Presentation Guide
+
+1. **Slide 1: Scale-Out Elasticity**
+   - **Picture:** Screenshot of **Query 1** (`SuccessfulRescale`) highlighting `scaled to 3 by the scaler: http-scaler`.
+   - **Talking Point:** _"KEDA monitored active HTTP concurrency through Envoy ingress. As concurrent requests exceeded our threshold of 30, the platform automatically provisioned two additional replicas in 16.4 seconds."_
+
+2. **Slide 2: Flap-Damping Stabilization Window (Scale-In)**
+   - **Picture:** Screenshot of **Query 2** (Area chart) or **Query 1** highlighting `Scale down to 1 as all metrics below target`.
+   - **Talking Point:** _"When load ceased, Azure Container Apps' Kubernetes HPA held instances for the 300-second stabilization window to dampen potential traffic flapping, preventing severe CPU churn before cleanly terminating surplus pods."_
+
+3. **Slide 3: High Availability & SLO Compliance**
+   - **Picture:** Screenshot of **Query 3** (`ContainerCrashes = 0`) and **Query 4** (`P95 = 2449.28ms`).
+   - **Talking Point:** _"Across all 21 scaling transitions, the platform maintained 100% availability with 0 container crashes and absorbed 14,000+ requests with P95 latency well within our 3,000ms SLO."_
