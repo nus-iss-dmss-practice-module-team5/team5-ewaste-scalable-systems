@@ -51,7 +51,7 @@ func TestAssignmentControllerPickupTimeValidationIncludesField(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
-	context.Set(middleware.CorrelationIDKey, "corr-validation-001")
+	context.Set(middleware.CorrelationIDKey, "corr-invalid-001")
 
 	earliest := time.Date(2026, time.January, 1, 10, 0, 30, 0, time.UTC)
 	latest := earliest.Add(10 * time.Minute)
