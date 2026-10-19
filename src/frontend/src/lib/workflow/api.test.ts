@@ -819,6 +819,52 @@ describe("workflow api", () => {
     });
   });
 
+  it("names the allowed interval when a handoff pickup time is refused", async () => {
+    post.mockRejectedValue(
+      axiosError(422, {
+        code: "VALIDATION_ERROR",
+        message: "one or more fields are invalid",
+        correlation_id: "corr-validation",
+        details: {
+          field: "pickup_occurred_at",
+          reason: "PICKUP_TIME_BEFORE_ASSIGNMENT",
+          earliest_allowed: "2026-09-23T10:00:30Z",
+          latest_allowed: "2026-09-23T11:00:00Z",
+        },
+      }),
+    );
+
+    const error = await recordHandoff(
+      "token",
+      "asg-1",
+      5,
+      {
+        pickupOccurredAt: "2026-09-23T10:00:00.000Z",
+        donorRepresentativeName: "Representative",
+        actualItemCount: 1,
+        verificationHash: "a".repeat(64),
+      },
+      "idem-validation",
+    ).catch((e: unknown) => e);
+    expect(error).toMatchObject({
+      kind: "validation",
+      code: "VALIDATION_ERROR",
+      status: 422,
+      validation: {
+        field: "pickup_occurred_at",
+        reason: "PICKUP_TIME_BEFORE_ASSIGNMENT",
+        earliestAllowed: "2026-09-23T10:00:30Z",
+        latestAllowed: "2026-09-23T11:00:00Z",
+      },
+    });
+    expect((error as Error).message).toContain(
+      "Pickup time is before this assignment was made",
+    );
+    expect((error as Error).message).toContain(
+      new Date("2026-09-23T10:00:30Z").toLocaleString(),
+    );
+  });
+
   it("drops an incomplete current_state", async () => {
     post.mockRejectedValue(
       axiosError(409, {

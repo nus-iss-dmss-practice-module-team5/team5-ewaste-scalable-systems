@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"time"
 
 	"workflow-api/internal/dto"
 )
@@ -34,4 +35,39 @@ func AssignmentCurrentStateFromError(err error) (dto.AssignmentCurrentState, boo
 		return dto.AssignmentCurrentState{}, false
 	}
 	return stale.CurrentState, true
+}
+
+// Reasons a handoff's pickup_occurred_at is refused.
+const (
+	PickupTimeInFuture         = "PICKUP_TIME_IN_FUTURE"
+	PickupTimeBeforeAssignment = "PICKUP_TIME_BEFORE_ASSIGNMENT"
+)
+
+// AssignmentValidationError carries field-level details for a refused value.
+// It unwraps to ErrAssignmentValidation so the status mapping is unchanged.
+type AssignmentValidationError struct {
+	Details dto.ValidationDetails
+}
+
+func (e *AssignmentValidationError) Error() string { return ErrAssignmentValidation.Error() }
+
+func (e *AssignmentValidationError) Unwrap() error { return ErrAssignmentValidation }
+
+// pickupTimeError reports the accepted pickup interval: from the assignment
+// time (when known) up to the server time that refused the value.
+func pickupTimeError(reason string, earliest *time.Time, latest time.Time) error {
+	details := dto.ValidationDetails{Field: "pickup_occurred_at", Reason: reason, LatestAllowed: &latest}
+	if earliest != nil {
+		utc := earliest.UTC()
+		details.EarliestAllowed = &utc
+	}
+	return &AssignmentValidationError{Details: details}
+}
+
+func AssignmentValidationDetailsFromError(err error) (dto.ValidationDetails, bool) {
+	var invalid *AssignmentValidationError
+	if !errors.As(err, &invalid) || invalid == nil {
+		return dto.ValidationDetails{}, false
+	}
+	return invalid.Details, true
 }

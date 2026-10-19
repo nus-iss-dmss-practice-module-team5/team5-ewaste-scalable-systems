@@ -117,6 +117,7 @@ function withSync(children: ReactNode) {
 type User = ReturnType<typeof userEvent.setup>;
 
 async function fillHandoff(user: User) {
+  await user.clear(screen.getByTestId("collector-pickup-at"));
   await user.type(
     screen.getByTestId("collector-pickup-at"),
     "2026-09-23T10:00",
