@@ -139,6 +139,7 @@ export async function mockSelectAssignment(
     version: 1,
     claimId: "claim-local-mock",
     collectorScopeId: command.collectorScopeId,
+    assignedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
   data.assignments = [created, ...data.assignments];

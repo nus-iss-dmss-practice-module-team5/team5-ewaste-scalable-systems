@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -230,7 +231,7 @@ func (h *WorkflowReadController) ListAssignments(c *gin.Context) {
 	}
 	response.JSON(c, http.StatusOK, response.Page[dto.AssignmentView]{
 		Data: result.Data, Page: result.Page, PageSize: result.PageSize, TotalCount: result.TotalCount,
-		CorrelationID: middleware.GetCorrelationID(c),
+		CorrelationID: middleware.GetCorrelationID(c), ServerTime: new(time.Now().UTC()),
 	})
 }
 

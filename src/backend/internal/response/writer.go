@@ -35,6 +35,18 @@ func ErrorWithDetails(c *gin.Context, code apierror.Code, correlationID string, 
 	})
 }
 
+// ErrorWithValidationDetails names the refused field (and, for a time, the
+// accepted interval) so a client can correct the value before resending.
+func ErrorWithValidationDetails(c *gin.Context, code apierror.Code, correlationID string, details any) {
+	c.Set("telemetry_error_code", string(code))
+	c.AbortWithStatusJSON(apierror.Status(code), gin.H{
+		"code":           string(code),
+		"message":        apierror.Messages[code],
+		"correlation_id": correlationID,
+		"details":        details,
+	})
+}
+
 func NoContent(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
