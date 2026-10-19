@@ -47,7 +47,7 @@ az containerapp update --name "$API" --resource-group "$RG" --set-env-vars \
   EWASTE_KAFKA_ENABLED=true EWASTE_KAFKA_BROKERS="${NAMESPACE}.servicebus.windows.net:9093" \
   EWASTE_KAFKA_TLS_ENABLED=true EWASTE_KAFKA_SASL_MECHANISM=PLAIN \
   EWASTE_KAFKA_SASL_USERNAME='$ConnectionString' KAFKA_CONNECTION_STRING=secretref:kafka-conn \
-  EWASTE_KAFKA_PUBLISH_TIMEOUT=60s EWASTE_KAFKA_BATCH_SIZE=1 EWASTE_KAFKA_LEASE_DURATION=180s \
+  EWASTE_KAFKA_PUBLISH_TIMEOUT=60s EWASTE_KAFKA_BATCH_SIZE=50 EWASTE_KAFKA_LEASE_DURATION=180s \
   EWASTE_KAFKA_LEADER_LEASE_DURATION=300s --output none
 API_REVISION=$(az containerapp show --name "$API" --resource-group "$RG" --query properties.latestRevisionName -o tsv)
 az containerapp revision restart --name "$API" --resource-group "$RG" --revision "$API_REVISION" --output none

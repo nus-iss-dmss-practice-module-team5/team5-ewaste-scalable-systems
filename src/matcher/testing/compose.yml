@@ -99,7 +99,7 @@ services:
       EWASTE_KAFKA_TLS_ENABLED: 'false'
       EWASTE_KAFKA_SASL_USERNAME: ''
       EWASTE_KAFKA_SASL_PASSWORD: ''
-      EWASTE_KAFKA_BATCH_SIZE: 1
+      EWASTE_KAFKA_BATCH_SIZE: 50
     depends_on:
       mysql:
         condition: service_healthy
