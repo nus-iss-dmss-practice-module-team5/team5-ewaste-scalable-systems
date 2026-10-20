@@ -102,37 +102,18 @@ template {
 
 ## 4. Scaling Dynamics & Timing Architecture
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client as Locust / Load Generator
-    participant KEDA as KEDA / Envoy Ingress
-    participant HPA as Kubernetes HPA Engine
-    participant App as Container App Replicas (1..3)
-
-    Note over Client,App: PHASE 1: Scale-Out (~10-20s Response)
-    Client->>KEDA: Surge concurrent HTTP requests (> 30 concurrency)
-    KEDA->>HPA: Metrics report concurrency target exceeded
-    HPA->>App: Trigger scale-out: Provision Replica 2 and 3
-    App-->>Client: All 3 replicas actively serving requests (Load distributed)
-
-    Note over Client,App: PHASE 2: Load Cessation & Stabilization (300s Flap Damping)
-    Client->>KEDA: Traffic stops (Concurrency drops to 0)
-    KEDA->>HPA: Metrics report concurrency = 0
-    Note over HPA,App: Microsoft ACA locks HPA scale-down stabilization window to 300s.<br/>Replicas 2 and 3 remain alive & healthy to dampen potential traffic flap.
-
-    Note over Client,App: PHASE 3: Scale-In Execution (At T + 300s)
-    HPA->>App: 300-second stabilization timer expires without traffic surge
-    HPA->>App: Terminate Replicas 2 and 3 (100% scale-down step)
-    App-->>App: Replicas settle back to Baseline (min_replicas = 1)
-```
+![img_5.png](img_5.png)
 
 ### 4.1 Why Scale-Out is Fast (~15s) while Scale-In Takes 300s
 
-1. **Scale-Out Latency ($\approx 15\text{ seconds}$):**
+1. **Scale-Out Latency (~15 seconds):**
    - KEDA polls active Envoy ingress metrics every 15–30 seconds.
    - When concurrent requests exceed the target threshold (`30`), KEDA computes:
-     $$\text{Target Replicas} = \min\left(\text{max\_replicas}, \left\lceil \frac{\text{Active Concurrent Requests}}{\text{Target Concurrency}} \right\rceil\right)$$
+
+     $$
+     \text{Target Replicas} = \min\left(\text{max\_replicas}, \left\lceil \frac{\text{Active Concurrent Requests}}{\text{Target Concurrency}} \right\rceil\right)
+     $$
+
    - Pod provisioning starts immediately in parallel.
 2. **Scale-In Stabilization Window ($300\text{ seconds}$):**
    - In Azure Container Apps, active replica scale-in ($N \to 1$) is managed by the underlying **Kubernetes Horizontal Pod Autoscaler (HPA)**.
@@ -143,8 +124,6 @@ sequenceDiagram
    - Because our services enforce `min_replicas = 1` across all microservices (to eliminate cold-start latency for donors, recyclers, and collectors), scale-to-zero is intentionally inactive. Downscaling from $3 \to 1$ is governed entirely by the 300-second HPA stabilization window.
 
 ### 4.2 Flap Damping Architectural Justification (Viva / Evaluation Defense)
-
-When explaining the 300-second scale-in window to evaluators:
 
 > _"In production cloud environments, scaling down too rapidly (e.g., within 30 seconds) triggers **autoscaler flapping**—a destructive cycle where temporary dips in user traffic cause containers to be destroyed and immediately re-created. Azure Container Apps enforces a 300-second stabilization window to prevent flapping, preserving database connection pools, warm application caches, and avoiding container startup CPU penalties."_
 
