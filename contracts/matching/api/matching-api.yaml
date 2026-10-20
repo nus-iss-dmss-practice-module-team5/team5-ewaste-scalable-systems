@@ -1,0 +1,353 @@
+openapi: 3.1.0
+info:
+  title: EWCSB-2 matching API facade — design draft
+  version: 1.0.0-draft
+  description: |
+    Implementation owner: Unassigned. Routes, scopes and limits require approval.
+    Go owns all persistence; the Python worker receives no database credentials.
+    This draft adds no endpoint for claim, collector assignment or recovery.
+    Original business correlation_id is 1..128 characters in the body/saved run.
+    X-Correlation-ID is a separate transport trace, at most 100 ASCII bytes.
+    Use the original trace as that header only when safe and not altered by trim;
+    otherwise send a new UUID and retain the original trace in the body.
+    Never truncate or reject a valid event merely to fit the transport header.
+servers: []
+tags:
+  - name: Internal matching
+  - name: Recycler opportunities
+paths:
+  /internal/v1/matching/runs:
+    post:
+      tags: [Internal matching]
+      operationId: prepareMatchingRun
+      security: [{WorkloadBearer: []}]
+      x-required-scope: matching.execute
+      description: |
+        Authorise a verified workload and map replicas to service:matching-worker.
+        Require Idempotency-Key = trigger_type + ':' + trigger_id. Compare the
+        original event with immutable event_outbox data and the authoritative batch.
+        REQUEST_SUBMITTED trigger_id equals original_event.event_id. A separately
+        authorised EXPLICIT_RUN has a fresh trigger ID and no original_event.
+        Look up an authorised completed replay before enforcing SUBMITTED.
+        T1 commits one IN_PROGRESS command with its frozen input; no decision yet.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationHeader'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 64
+            pattern: '^(REQUEST_SUBMITTED|EXPLICIT_RUN):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PrepareRequest'}
+      responses:
+        '201':
+          description: New durable prepared run; no domain result committed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PreparedRun'}
+        '200':
+          description: Existing authorised prepared context or terminal replay.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunResponse'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /internal/v1/matching/runs/{run_id}:
+    get:
+      tags: [Internal matching]
+      operationId: getMatchingRun
+      security: [{WorkloadBearer: []}]
+      x-required-scope: matching.read
+      description: Recover the saved context/result after a lost response; does not refresh evaluation_at.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/CorrelationHeader'
+      responses:
+        '200':
+          description: Caller-authorised durable run state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunResponse'}
+        default: {$ref: '#/components/responses/Error'}
+  /internal/v1/matching/runs/{run_id}/refresh:
+    post:
+      tags: [Internal matching]
+      operationId: refreshMatchingContext
+      security: [{WorkloadBearer: []}]
+      x-required-scope: matching.execute
+      description: |
+        Only after confirmed STALE_CONTEXT. Compare-and-set expected_input_hash
+        under command/batch locks. The same input batch version/epoch must remain
+        SUBMITTED. Pin a new complete snapshot and evaluation_at; increment
+        context_generation. Never refresh a completed decision. Resolve a lost
+        refresh response through GET before attempting another refresh.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/CorrelationHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_input_hash]
+              properties:
+                expected_input_hash: {$ref: '#/components/schemas/Sha256'}
+      responses:
+        '200':
+          description: Newly persisted prepared context, still no completed decision.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PreparedRun'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /internal/v1/matching/runs/{run_id}/result:
+    post:
+      tags: [Internal matching]
+      operationId: commitMatchingResult
+      security: [{WorkloadBearer: []}]
+      x-required-scope: matching.execute
+      description: |
+        run_id in path/body must agree. Validate the entire candidate set, rule
+        evidence, counts, hashes and saved generation. Recheck the complete current
+        approved-organisation/configuration context. T2 atomically commits the
+        decision, all candidate rows, conditional MATCHED update, audit, event
+        intent and completed response. NO_MATCH does not update the batch.
+        Identical completed replay returns original IDs even after later claim or
+        collector choice. Different content for the same completed run is 409.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/CorrelationHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../contracts/MatchingOutput.v1.schema.json'}
+      responses:
+        '200':
+          description: Durable commit or authorised identical replay.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CommittedResult'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422':
+          description: Invalid result, not a business NO_MATCH; no partial domain writes.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MatchingError'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/opportunities:
+    get:
+      tags: [Recycler opportunities]
+      operationId: listRecyclerOpportunities
+      security: [{RecyclerBearer: []}]
+      description: |
+        Require active session/user, recycler role and ACTIVE PROCESSING_FACILITY.
+        Derive the organisation from authenticated scope, never query parameters.
+        Join current MATCHED batch/epoch and decision.input batch_version =
+        batch.version - 1, outcome MATCHED; expose only caller's is_matched=true row.
+        Cursor must bind to that organisation/filter and not reveal other candidates.
+        No ranking score or capacity reservation; claiming remains EWCSB-3.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationHeader'
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        - name: cursor
+          in: query
+          schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Only current opportunities authorised for this recycler.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/Opportunity'}
+                  next_cursor: {type: [string, 'null']}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/opportunities/{batch_id}:
+    get:
+      tags: [Recycler opportunities]
+      operationId: getRecyclerOpportunity
+      security: [{RecyclerBearer: []}]
+      description: Same current-decision and caller-scope join as list; 404 conceals missing, stale and unauthorised rows.
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema: {$ref: '#/components/schemas/Uuid'}
+        - $ref: '#/components/parameters/CorrelationHeader'
+      responses:
+        '200':
+          description: Authorised batch summary; no competitor results or capacity.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Opportunity'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    WorkloadBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Verified issuer/audience/signature/expiry and service role; proposed matching.execute/read scopes. Separate authority for EXPLICIT_RUN. Issuer/audience remain unconfirmed.
+    RecyclerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Existing active-session authentication plus server-side RBAC and organisation scope.
+  parameters:
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Uuid'}
+      description: command_idempotency.id; not the batch or decision ID.
+    CorrelationHeader:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      schema: {type: string, minLength: 1, maxLength: 100, pattern: '^[\x21-\x7E]+$'}
+      description: Safe transport trace only. Preserve original 1..128-character event trace in body/saved context; generate UUID header if unsafe/long. Never truncate.
+  schemas:
+    Uuid: {$ref: '../kafka/RequestSubmitted.v1.schema.json#/$defs/uuidV4'}
+    Timestamp: {$ref: '../kafka/RequestSubmitted.v1.schema.json#/$defs/utcTimestamp'}
+    Uint32: {$ref: '../kafka/RequestSubmitted.v1.schema.json#/$defs/positiveUint32'}
+    Epoch: {$ref: '../kafka/RequestSubmitted.v1.schema.json#/$defs/positiveUint64String'}
+    TraceId: {type: string, minLength: 1, maxLength: 128}
+    Sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+    PrepareRequest:
+      type: object
+      additionalProperties: false
+      required: [trigger_id, trigger_type, batch_id, batch_version, claim_epoch, correlation_id]
+      properties:
+        trigger_id: {$ref: '#/components/schemas/Uuid'}
+        trigger_type: {type: string, enum: [REQUEST_SUBMITTED, EXPLICIT_RUN]}
+        batch_id: {$ref: '#/components/schemas/Uuid'}
+        batch_version: {$ref: '#/components/schemas/Uint32'}
+        claim_epoch: {$ref: '#/components/schemas/Epoch'}
+        correlation_id: {$ref: '#/components/schemas/TraceId'}
+        original_event: {$ref: '../kafka/RequestSubmitted.v1.schema.json'}
+      allOf:
+        - if: {properties: {trigger_type: {const: REQUEST_SUBMITTED}}}
+          then: {required: [original_event]}
+          else: {not: {required: [original_event]}}
+      description: Identity/version/epoch/correlation fields must equal original_event for REQUEST_SUBMITTED; verify immutable outbox equality. Header trace is excluded from request_hash.
+    PreparedRun:
+      type: object
+      additionalProperties: false
+      required: [phase, run_id, prepared_context]
+      properties:
+        phase: {const: PREPARED}
+        run_id: {$ref: '#/components/schemas/Uuid'}
+        prepared_context: {$ref: '../contracts/MatchingInput.v1.schema.json'}
+    CompletedRun:
+      type: object
+      additionalProperties: false
+      required: [phase, run_id, result]
+      properties:
+        phase: {const: COMPLETED}
+        run_id: {$ref: '#/components/schemas/Uuid'}
+        result:
+          oneOf:
+            - {$ref: '#/components/schemas/CommittedResult'}
+            - {$ref: '#/components/schemas/SkippedResult'}
+    RunResponse:
+      oneOf:
+        - {$ref: '#/components/schemas/PreparedRun'}
+        - {$ref: '#/components/schemas/CompletedRun'}
+    CommittedResult:
+      type: object
+      additionalProperties: false
+      required: [disposition, run_id, decision_id, batch_id, claim_epoch, outcome, evaluated_count, eligible_count, batch_status, committed_batch_version, correlation_id, replay]
+      properties:
+        disposition: {const: COMMITTED}
+        run_id: {$ref: '#/components/schemas/Uuid'}
+        decision_id: {$ref: '#/components/schemas/Uuid'}
+        batch_id: {$ref: '#/components/schemas/Uuid'}
+        claim_epoch: {$ref: '#/components/schemas/Epoch'}
+        outcome: {type: string, enum: [MATCHED, NO_MATCH]}
+        evaluated_count: {type: integer, minimum: 0, maximum: 4294967295}
+        eligible_count: {type: integer, minimum: 0, maximum: 4294967295}
+        batch_status: {type: string, enum: [MATCHED, SUBMITTED]}
+        committed_batch_version: {$ref: '#/components/schemas/Uint32'}
+        correlation_id: {$ref: '#/components/schemas/TraceId'}
+        replay: {type: boolean}
+      description: Captures original commit state, not current lifecycle after later commands. All saved IDs stable; replay indicator is response metadata.
+    SkippedResult:
+      type: object
+      additionalProperties: false
+      required: [disposition, run_id, batch_id, code, correlation_id, replay]
+      properties:
+        disposition: {const: SKIPPED}
+        run_id: {$ref: '#/components/schemas/Uuid'}
+        batch_id: {$ref: '#/components/schemas/Uuid'}
+        code: {const: STATE_CONFLICT}
+        correlation_id: {$ref: '#/components/schemas/TraceId'}
+        replay: {type: boolean}
+      description: Authenticated valid trigger durably resolved in command_idempotency; no matching decision, candidate, lifecycle, audit or matching event write. Not a business NO_MATCH.
+    MatchingError:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable, transport_correlation_id]
+      properties:
+        code:
+          type: string
+          enum: [INVALID_CONTRACT, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, IDEMPOTENCY_CONFLICT, STALE_CONTEXT, STATE_CONFLICT, INVALID_RESULT, UNSUPPORTED_RULE_SET, RATE_LIMITED, UNAVAILABLE, LIMIT_EXCEEDED]
+        message: {type: string, minLength: 1}
+        retryable: {type: boolean}
+        transport_correlation_id: {type: string, minLength: 1, maxLength: 100, pattern: '^[\x21-\x7E]+$'}
+        correlation_id: {$ref: '#/components/schemas/TraceId'}
+        run_id: {$ref: '#/components/schemas/Uuid'}
+        durable_disposition: {$ref: '#/components/schemas/SkippedResult'}
+      description: Original business correlation_id included once validated/authorised. A STATE_CONFLICT response alone does not permit offset commit; durable_disposition or completed GET must confirm terminal skip.
+    Opportunity:
+      type: object
+      additionalProperties: false
+      required: [batch_id, decision_id, claim_epoch, batch_version, is_matched, batch]
+      properties:
+        batch_id: {$ref: '#/components/schemas/Uuid'}
+        decision_id: {$ref: '#/components/schemas/Uuid'}
+        claim_epoch: {$ref: '#/components/schemas/Epoch'}
+        batch_version: {$ref: '#/components/schemas/Uint32'}
+        is_matched: {const: true}
+        batch:
+          type: object
+          additionalProperties: false
+          required: [status, category, quantity, estimated_weight_kg, condition_rating, is_data_bearing, zone, collection_deadline]
+          properties:
+            status: {const: MATCHED}
+            category: {$ref: '../kafka/RequestSubmitted.v1.schema.json#/properties/data/properties/category'}
+            quantity: {$ref: '../kafka/RequestSubmitted.v1.schema.json#/properties/data/properties/quantity'}
+            estimated_weight_kg: {$ref: '../kafka/RequestSubmitted.v1.schema.json#/properties/data/properties/estimated_weight_kg'}
+            condition_rating: {$ref: '../kafka/RequestSubmitted.v1.schema.json#/properties/data/properties/condition_rating'}
+            is_data_bearing: {type: boolean}
+            zone: {$ref: '../kafka/RequestSubmitted.v1.schema.json#/properties/data/properties/zone'}
+            collection_deadline: {$ref: '#/components/schemas/Timestamp'}
+  responses:
+    Conflict:
+      description: Idempotency, stale context or state conflict. Only STALE_CONTEXT permits refresh; terminal SKIPPED must be durable before source acknowledgement.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/MatchingError'}
+    Error:
+      description: '400 contract; 401/403 auth; 404 missing/scope; 422 bad result; 429 throttling; 503 dependency. Resolve uncertain commit with the same run.'
+      headers:
+        Retry-After:
+          description: Seconds or HTTP date when throttled/unavailable; honour within configured policy.
+          schema: {type: string}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/MatchingError'}

@@ -1,0 +1,1801 @@
+openapi: 3.0.3
+info:
+  title: E-Waste Workflow API
+  version: 2.0.0
+  description: Sprint 1 authentication/health and Sprint 2 donor-to-handoff workflow contract.
+servers:
+  - url: http://localhost:8080
+    description: Local development and test server
+tags:
+  - name: Health
+  - name: Test
+  - name: Authentication
+  - name: Batches
+  - name: Opportunities
+  - name: Assignments
+  - name: Processing
+  - name: Evidence
+  - name: Analytics
+  - name: Auditor
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Check whether the process is alive
+      operationId: livenessCheck
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              example:
+                status: ok
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Check whether required dependencies are available
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: MySQL and Redis are ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              example:
+                status: ready
+                mysql: ok
+                redis: ok
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '503':
+          description: MySQL or Redis is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              example:
+                status: not_ready
+                mysql: unavailable
+                redis: ok
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+  /api/v1/hello:
+    get:
+      tags: [Test]
+      summary: Return the test Hello World response
+      operationId: helloWorld
+      responses:
+        '200':
+          description: Hello World response
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg]
+                properties:
+                  msg: {type: string}
+              example:
+                msg: hello world
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Authenticate a user and create an active session
+      operationId: login
+      security: []
+      description: Invalid, unknown, and disabled credentials return the same generic error.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: donor1@ewaste.test
+              password: example-password
+      responses:
+        '200':
+          description: Login succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidCredentials'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Rotate the access and refresh JWT pair
+      operationId: refresh
+      security: []
+      description: The refresh JWT is sent in JSON and is rotated after successful use.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Token pair rotated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke the current authenticated session
+      operationId: logout
+      description: Requires an active access JWT. No request body is required.
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Session revoked successfully
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/register:
+    post:
+      tags: [Authentication]
+      summary: Self-register a donor, collector or processor account
+      operationId: register
+      security: []
+      description: >-
+        Creates one organisation and one user. DONOR accounts are ACTIVE at once.
+        COLLECTOR and RECYCLER accounts stay PENDING, and cannot log in, until a
+        System Administrator approves them. Platform roles cannot self-register.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              email: ops@newcollect.example
+              password: example-password
+              display_name: New Collect Operator
+              role: COLLECTOR
+              organisation_name: New Collect SG
+      responses:
+        '201':
+          description: Registration recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlation_id]
+                properties:
+                  data: {$ref: '#/components/schemas/RegistrationResponse'}
+                  correlation_id: {type: string}
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409': {$ref: '#/components/responses/RegistrationConflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/registrations:
+    get:
+      tags: [Authentication]
+      summary: List registrations awaiting approval
+      operationId: listPendingRegistrations
+      description: SYSTEM_ADMIN only. Oldest first, at most 200 rows.
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Pending registrations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlation_id]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/PendingRegistration'}
+                  correlation_id: {type: string}
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/registrations/{user_id}/approve:
+    post:
+      tags: [Authentication]
+      summary: Approve a pending registration
+      operationId: approveRegistration
+      description: SYSTEM_ADMIN only. Activates the user and its organisation and records the reviewer. A registration is decided once.
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - {name: user_id, in: path, required: true, schema: {type: string, maxLength: 32}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegistrationDecisionRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/RegistrationDecided'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/RegistrationConflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/registrations/{user_id}/reject:
+    post:
+      tags: [Authentication]
+      summary: Reject a pending registration
+      operationId: rejectRegistration
+      description: SYSTEM_ADMIN only. Disables the user and marks the organisation REJECTED; both rows are kept for audit.
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - {name: user_id, in: path, required: true, schema: {type: string, maxLength: 32}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegistrationDecisionRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/RegistrationDecided'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/RegistrationConflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/batches:
+    get:
+      tags: [Batches]
+      summary: List batches visible to the authenticated actor
+      operationId: listBatches
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [DRAFT, SUBMITTED, MATCHED, APPROVED, ASSIGNED, COLLECTED, FAILED_COLLECTION]
+        - name: page
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200':
+          description: Scoped paginated batch list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchListResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+    post:
+      tags: [Batches]
+      summary: Create a donor batch draft
+      operationId: createBatchDraft
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchDraftRequest'
+            example:
+              category: laptops
+              quantity: 10
+              estimated_weight_kg: 25.50
+              condition_rating: reusable
+              is_data_bearing: true
+              zone: central
+              collection_deadline: '2026-09-23T02:00:00.000000Z'
+              notes: Stored in the loading bay.
+      responses:
+        '201':
+          description: Draft created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/batches/{batch_id}:
+    parameters:
+      - $ref: '#/components/parameters/BatchId'
+    get:
+      tags: [Batches]
+      summary: Get one scoped batch
+      operationId: getBatch
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Batch detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      tags: [Batches]
+      summary: Edit a donor-owned draft batch
+      operationId: editBatchDraft
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchDraftRequest'
+      responses:
+        '200':
+          description: Draft updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/batches/{batch_id}/submit:
+    post:
+      tags: [Batches]
+      summary: Validate and submit a donor draft
+      operationId: submitBatch
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      responses:
+        '200':
+          description: Batch submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/batches/{batch_id}/receipt:
+    post:
+      tags: [Batches]
+      summary: Verify the facility-received batch
+      operationId: verifyReceipt
+      description: |
+        A permitted RECYCLER records the authoritative facility receipt. The command is valid
+        only for a COLLECTED batch with an accepted claim and assignment in the caller's
+        processing-facility organisation. It advances COLLECTED to VERIFIED atomically with the
+        receipt row, audit event, and ReceiptVerified outbox record. Final analytics anomaly_codes
+        are not returned by this command.
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceiptRequest'
+      responses:
+        '200':
+          description: Receipt verified and batch advanced to VERIFIED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/opportunities:
+    get:
+      tags: [Opportunities]
+      summary: List eligible matching opportunities
+      operationId: listOpportunities
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: page
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200':
+          description: Scoped eligible opportunities, or an empty list while matching is in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpportunityListResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/opportunities/{batch_id}:
+    parameters:
+      - $ref: '#/components/parameters/BatchId'
+    get:
+      tags: [Opportunities]
+      summary: Get one eligible matching opportunity
+      operationId: getOpportunity
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Opportunity detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpportunityResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/batches/{batch_id}/claim:
+    post:
+      tags: [Opportunities]
+      summary: Claim one eligible opportunity using FCFS transaction controls
+      operationId: claimOpportunity
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRequest'
+            example:
+              expected_version: 3
+              claim_epoch: '1'
+              notes: Ready for collection.
+      responses:
+        '200':
+          description: Claim confirmed and the next active collector assigned in the same transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/batches/{batch_id}/assignments:
+    post:
+      tags: [Assignments]
+      summary: Manually select an approved batch as a collector (legacy fallback)
+      operationId: selectAssignment
+      deprecated: true
+      description: Winning claims now assign the next active collector automatically. This route remains only for operational recovery of an APPROVED batch.
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignmentSelectionRequest'
+            example:
+              expected_version: 4
+              claim_epoch: '1'
+              collector_scope_id: 9f6d5c3a-37e1-4e0e-a5f6-0f7f4e2b2c99
+      responses:
+        '201':
+          description: Assignment created and batch assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/assignments:
+    get:
+      tags: [Assignments]
+      summary: List assignments visible to the authenticated collector
+      operationId: listAssignments
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ACCEPTED, COMPLETED, FAILED, SUPERSEDED]
+        - name: page
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200':
+          description: Scoped assignment list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentListResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/assignments/{assignment_id}:
+    parameters:
+      - $ref: '#/components/parameters/AssignmentId'
+    get:
+      tags: [Assignments]
+      summary: Get one scoped assignment
+      operationId: getAssignment
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Assignment detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/assignments/{assignment_id}/accept:
+    post:
+      tags: [Assignments]
+      summary: Accept an assignment (legacy compatibility command)
+      operationId: acceptAssignment
+      deprecated: true
+      description: New selection creates an ACCEPTED assignment. This endpoint remains for the legacy UI contract only.
+      parameters:
+        - $ref: '#/components/parameters/AssignmentId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      responses:
+        '200':
+          description: Assignment accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/assignments/{assignment_id}/reject:
+    post:
+      tags: [Assignments]
+      summary: Reject an assignment before pickup
+      operationId: rejectAssignment
+      parameters:
+        - $ref: '#/components/parameters/AssignmentId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectAssignmentRequest'
+            example:
+              rejection_reason: route_unavailable
+      responses:
+        '200':
+          description: Assignment rejected and the next active collector is assigned when available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/assignments/{assignment_id}/handoff:
+    post:
+      tags: [Assignments]
+      summary: Record a successful collection handoff
+      operationId: recordCollectionHandoff
+      parameters:
+        - $ref: '#/components/parameters/AssignmentId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HandoffRequest'
+            example:
+              pickup_occurred_at: '2026-09-19T02:00:00.000000Z'
+              donor_representative_name: Representative
+              actual_item_count: 10
+              verification_hash: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              notes: Items received.
+      responses:
+        '200':
+          description: Handoff recorded and batch collected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/assignments/{assignment_id}/fail:
+    post:
+      tags: [Assignments]
+      summary: Report a failed pickup
+      operationId: reportFailedPickup
+      parameters:
+        - $ref: '#/components/parameters/AssignmentId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FailedPickupRequest'
+            example:
+              failure_reason: collector_absent
+              observed_details: No authorised recipient was present.
+      responses:
+        '200':
+          description: Failed pickup recorded and the next active collector is assigned when available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentMutationResponse'
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/batches/{batch_id}/treatment:
+    post:
+      tags: [Processing]
+      summary: Record a facility treatment outcome
+      operationId: recordTreatment
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TreatmentRequest'}
+      responses:
+        '200': {description: Treatment recorded and batch advanced to RECYCLED, content: {application/json: {schema: {$ref: '#/components/schemas/TreatmentMutationResponse'}}}}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/batches/{batch_id}/evidence:
+    post:
+      tags: [Evidence]
+      summary: Upload optional receipt or treatment evidence after synchronous D2 validation
+      operationId: uploadEvidence
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, lifecycle_stage]
+              properties:
+                file: {type: string, format: binary}
+                lifecycle_stage: {type: string, enum: [RECEIPT, TREATMENT]}
+      responses:
+        '201': {description: Evidence metadata saved after synchronous D2 ingestion validation. Invalid type or size returns 422 and does not persist an evidence row., content: {application/json: {schema: {$ref: '#/components/schemas/EvidenceResponse'}}}}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/batches/{batch_id}/evidence/{evidence_id}:
+    get:
+      tags: [Evidence]
+      summary: Download authorised evidence
+      operationId: downloadEvidence
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: evidence_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Admin-Access-Reason
+          in: header
+          required: false
+          description: Required for System Administrator downloads and recorded in the audit event; ignored for other authorised roles.
+          schema: {type: string, minLength: 1, maxLength: 256}
+      responses:
+        '200':
+          description: Validated evidence bytes. Downloads are authorised by the owning facility, Auditor, or System Administrator policy.
+          content:
+            application/pdf: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+            image/png: {schema: {type: string, format: binary}}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/processing/batches:
+    get:
+      tags: [Processing]
+      summary: List processing batches scoped to the owning facility
+      operationId: listProcessingBatches
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: status
+          in: query
+          schema: {type: string, enum: [COLLECTED, VERIFIED, RECYCLED, COMPLETED]}
+        - name: page
+          in: query
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200': {description: Processing list, content: {application/json: {schema: {$ref: '#/components/schemas/ProcessingListResponse'}}}}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/processing/batches/{batch_id}:
+    get:
+      tags: [Processing]
+      summary: Read processing details for an owning facility
+      operationId: getProcessingBatch
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200': {description: Processing details, content: {application/json: {schema: {$ref: '#/components/schemas/ProcessingDetailResponse'}}}}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/batches/{batch_id}/analytics-input:
+    get:
+      tags: [Analytics]
+      summary: Prepare frozen inputs for a committed treatment event
+      operationId: prepareAnalyticsInput
+      description: Requires the analytics service bearer token. Returns the immutable source snapshot without creating rows; repeatable after completion. Hash the unchanged UTF-8 bytes of input_canonical_json before parsing it for evaluation.
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/AnalyticsAuthorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: source_event_id
+          in: query
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Frozen inputs and source identity, content: {application/json: {schema: {$ref: '#/components/schemas/AnalyticsPreparation'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/batches/{batch_id}/analytics-results:
+    post:
+      tags: [Analytics]
+      summary: Acknowledge a durable deterministic analytics result
+      operationId: acknowledgeAnalyticsResult
+      description: Only the authenticated analytics service identity may call this operation. Authorization must carry the configured analytics service bearer token; user access tokens are not accepted. If-Match-Version must equal the prepared source_event_version, including replay after completion.
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/AnalyticsAuthorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AnalyticsAcknowledgement'}
+      responses:
+        '200': {description: Analytics result saved or identical replay returned, content: {application/json: {schema: {$ref: '#/components/schemas/CompletionMutationResponse'}}}}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/audit/batches/{batch_id}/timeline:
+    get:
+      tags: [Auditor]
+      summary: Read the batch custody timeline
+      operationId: getBatchTimeline
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: page
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          required: false
+          description: Maximum number of timeline rows to return. Defaults to 100 for an audit batch history.
+          schema: {type: integer, minimum: 1, maximum: 100, default: 100}
+      responses:
+        '200': {description: Audit timeline, content: {application/json: {schema: {$ref: '#/components/schemas/TimelineResponse'}}}}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/audit/batches/{batch_id}/anomalies:
+    get:
+      tags: [Auditor]
+      summary: Read stored analytics anomaly codes
+      operationId: getBatchAnomalies
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: page
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          required: false
+          description: Maximum number of anomaly rows to return. Defaults to 100 for an audit batch.
+          schema: {type: integer, minimum: 1, maximum: 100, default: 100}
+      responses:
+        '200': {description: Stored anomaly flags, content: {application/json: {schema: {$ref: '#/components/schemas/AnomalyListResponse'}}}}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/audit/impact:
+    get:
+      tags: [Auditor]
+      summary: Read deterministic impact metrics
+      description: >-
+        Totals and per-batch results for COMPLETED batches. Each batch counts
+        once. Every filter is optional and is echoed in the response.
+      operationId: getImpact
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: completed_from
+          in: query
+          description: Inclusive start of the completion window. A YYYY-MM-DD day in UTC or an RFC 3339 timestamp.
+          schema: {type: string}
+        - name: completed_to
+          in: query
+          description: Inclusive end of the completion window. A YYYY-MM-DD day covers the whole day in UTC.
+          schema: {type: string}
+        - name: category
+          in: query
+          description: Category the facility received.
+          schema: {type: string, enum: [ICT_EQUIPMENT, LARGE_APPLIANCE, BATTERIES, CONSUMER_ELECTRONICS]}
+        - name: processing_org_id
+          in: query
+          description: Processing facility that treated the batch.
+          schema: {type: string, maxLength: 32}
+      responses:
+        '200': {description: Impact metrics, content: {application/json: {schema: {$ref: '#/components/schemas/ImpactResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+components:
+  parameters:
+    Authorization:
+      name: Authorization
+      in: header
+      required: true
+      description: Access token using the Bearer scheme.
+      schema: {type: string}
+    AnalyticsAuthorization:
+      name: Authorization
+      in: header
+      required: true
+      description: Bearer token for the configured analytics worker service identity; user access tokens are rejected.
+      schema: {type: string}
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      description: Client correlation ID; generated by the server when omitted.
+      schema: {type: string, minLength: 1, maxLength: 128}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Stable command identity reused for safe retries.
+      schema: {type: string, minLength: 1, maxLength: 128}
+    IfMatchVersion:
+      name: If-Match-Version
+      in: header
+      required: true
+      description: Expected locked aggregate version for a mutating command.
+      schema: {type: integer, minimum: 1}
+    BatchId:
+      name: batch_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    AssignmentId:
+      name: assignment_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  headers:
+    CorrelationId:
+      description: Correlation ID for tracing the request.
+      schema: {type: string, minLength: 1, maxLength: 128}
+  schemas:
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: {type: string, format: email, maxLength: 254}
+        password: {type: string, format: password, minLength: 1}
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: {type: string, minLength: 1}
+    TokenResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, refresh_expires_in]
+      properties:
+        access_token:
+          type: string
+          description: Short-lived access JWT for protected APIs.
+        refresh_token:
+          type: string
+          description: Longer-lived refresh JWT accepted only by /auth/refresh.
+        token_type: {type: string, enum: [Bearer]}
+        expires_in:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Access-token lifetime in seconds.
+        refresh_expires_in:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Refresh-token lifetime in seconds.
+    BatchDraftRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        category: {type: string, maxLength: 100}
+        quantity: {type: integer, minimum: 1, maximum: 100000}
+        estimated_weight_kg: {type: number, format: double, minimum: 0.1}
+        condition_rating: {type: string, maxLength: 50}
+        is_data_bearing: {type: boolean, default: false}
+        zone: {type: string, maxLength: 100}
+        collection_deadline: {type: string, format: date-time}
+        notes: {type: string, maxLength: 500}
+    Batch:
+      type: object
+      required: [batch_id, status, version]
+      properties:
+        batch_id: {type: string, format: uuid}
+        status:
+          type: string
+          enum: [DRAFT, SUBMITTED, MATCHED, APPROVED, ASSIGNED, COLLECTED, VERIFIED, RECYCLED, COMPLETED, FAILED_COLLECTION]
+        version: {type: integer, minimum: 1}
+        claim_epoch: {type: string, pattern: '^[0-9]+$'}
+        collector_scope_id: {type: string, format: uuid}
+        category: {type: string}
+        quantity: {type: integer, minimum: 1}
+        estimated_weight_kg: {type: number, format: double}
+        condition_rating: {type: string}
+        is_data_bearing: {type: boolean}
+        zone: {type: string}
+        collection_deadline: {type: string, format: date-time}
+        notes: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    BatchMutationResponse:
+      type: object
+      required: [data, correlation_id]
+      properties:
+        data: {$ref: '#/components/schemas/Batch'}
+        correlation_id: {type: string}
+        event_id: {type: string, format: uuid}
+        event_state: {type: string, enum: [PENDING, PUBLISHED]}
+    ReceiptRequest:
+      type: object
+      additionalProperties: false
+      required: [actual_category, actual_item_count, actual_weight_kg]
+      properties:
+        actual_category:
+          type: string
+          enum: [ICT_EQUIPMENT, LARGE_APPLIANCE, BATTERIES, CONSUMER_ELECTRONICS]
+        actual_item_count: {type: integer, minimum: 1, maximum: 100000}
+        actual_weight_kg:
+          type: string
+          pattern: '^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$'
+          description: Decimal kilograms with at most two decimal places; accepted range is 0.10 to 50000.00.
+    ReceiptMutationResponse:
+      type: object
+      required: [data, correlation_id, event_id, event_state]
+      properties:
+        data:
+          type: object
+          required: [batch_id, status, version, receipt_id, actual_category, actual_item_count, actual_weight_kg]
+          properties:
+            batch_id: {type: string, format: uuid}
+            status: {type: string, enum: [VERIFIED]}
+            version: {type: integer, minimum: 1}
+            receipt_id: {type: string, format: uuid}
+            actual_category: {type: string}
+            actual_item_count: {type: integer, minimum: 1, maximum: 100000}
+            actual_weight_kg: {type: string}
+        correlation_id: {type: string}
+        event_id: {type: string, format: uuid}
+        event_state: {type: string, enum: [PENDING, PUBLISHED]}
+    TreatmentRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reused_kg: {type: string, nullable: true, pattern: '^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$'}
+        recycled_kg: {type: string, nullable: true, pattern: '^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$'}
+        disposed_kg: {type: string, nullable: true, pattern: '^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$'}
+        evidence_id: {type: string, nullable: true, format: uuid}
+      description: Either all three treatment amounts are absent or all three are supplied. Explicit zero is valid; unknown_kg is server-derived.
+    TreatmentMutationResponse:
+      type: object
+      required: [data, correlation_id, event_id, event_state]
+      properties:
+        data:
+          type: object
+          required: [batch_id, status, version, treatment_id, data_quality]
+          properties:
+            batch_id: {type: string, format: uuid}
+            status: {type: string, enum: [RECYCLED]}
+            version: {type: integer, minimum: 1}
+            treatment_id: {type: string, format: uuid}
+            reused_kg: {type: string, nullable: true}
+            recycled_kg: {type: string, nullable: true}
+            disposed_kg: {type: string, nullable: true}
+            unknown_kg: {type: string, nullable: true}
+            diverted_kg: {type: string, nullable: true}
+            data_quality: {type: string, enum: [COMPLETE, PARTIAL, MISSING]}
+            evidence_status: {type: string, enum: [PRESENT, ABSENT], description: PRESENT means a validated evidence object is linked; ABSENT means no evidence is linked. Rejected uploads are not persisted.}
+        correlation_id: {type: string}
+        event_id: {type: string, format: uuid}
+        event_state: {type: string, enum: [PENDING, PUBLISHED]}
+    EvidenceResponse:
+      type: object
+      required: [data, correlation_id]
+      properties:
+        data:
+          type: object
+          required: [evidence_id, batch_id, lifecycle_stage, mime_type, file_size_bytes, sha256_hash, validation_status]
+          properties:
+            evidence_id: {type: string, format: uuid}
+            batch_id: {type: string, format: uuid}
+            lifecycle_stage: {type: string, enum: [RECEIPT, TREATMENT]}
+            mime_type: {type: string, enum: [application/pdf, image/jpeg, image/png]}
+            file_size_bytes: {type: integer, minimum: 1, maximum: 5242880}
+            sha256_hash: {type: string, pattern: '^[0-9a-f]{64}$'}
+            validation_status: {type: string, enum: [VALIDATED], description: Evidence is accepted only after synchronous D2 ingestion validation. Invalid uploads return 422 and do not create metadata.}
+        correlation_id: {type: string}
+    AnalyticsPreparation:
+      type: object
+      additionalProperties: false
+      required: [batch_id, source_event_id, source_event_version, rule_version, correlation_id, input_hash, input_canonical_json]
+      properties:
+        batch_id: {type: string, format: uuid}
+        source_event_id: {type: string, format: uuid}
+        source_event_version: {type: integer, minimum: 1}
+        rule_version: {type: string, minLength: 1, maxLength: 64}
+        correlation_id: {type: string, minLength: 1, maxLength: 128}
+        input_hash: {type: string, pattern: '^[0-9a-f]{64}$'}
+        input_canonical_json:
+          type: string
+          description: Exact JSON input bytes encoded as a string, including source/batch IDs, source version, receipt/treatment IDs and versions, measurements, outcomes, correlation and frozen rule version. SHA-256 the UTF-8 value without re-serializing it.
+    AnalyticsAcknowledgement:
+      type: object
+      required: [source_event_id, source_event_version, analytics_run_id, input_hash, rule_version, data_quality, metrics, anomaly_codes]
+      additionalProperties: false
+      properties:
+        source_event_id: {type: string, format: uuid}
+        source_event_version: {type: integer, minimum: 1}
+        analytics_run_id: {type: string, minLength: 1, maxLength: 128}
+        input_hash: {type: string, pattern: '^[0-9a-f]{64}$'}
+        rule_version:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Must equal the rule version frozen in the source event and returned by preparation. EWASTE_ANALYTICS_APPROVED_RULE_VERSION selects the policy for newly recorded treatments only.
+        data_quality: {type: string, enum: [COMPLETE, PARTIAL, MISSING]}
+        metrics: {$ref: '#/components/schemas/AnalyticsMetrics'}
+        anomaly_codes:
+          type: array
+          uniqueItems: true
+          items: {type: string, enum: [CATEGORY_MISMATCH, COUNT_MISMATCH, WEIGHT_MISMATCH, MISSING_OUTCOME, UNALLOCATED_WEIGHT]}
+    AnalyticsMetrics:
+      type: object
+      additionalProperties: false
+      required: [declared_weight_kg, actual_weight_kg, reused_kg, recycled_kg, disposed_kg, unknown_kg, diverted_kg, declared_quantity, actual_item_count, category_match, weight_delta_kg, count_delta]
+      properties:
+        declared_weight_kg: {type: string, nullable: true}
+        actual_weight_kg: {type: string, nullable: true}
+        reused_kg: {type: string, nullable: true}
+        recycled_kg: {type: string, nullable: true}
+        disposed_kg: {type: string, nullable: true}
+        unknown_kg: {type: string, nullable: true}
+        diverted_kg: {type: string, nullable: true}
+        declared_quantity: {type: integer, nullable: true}
+        actual_item_count: {type: integer, nullable: true}
+        category_match: {type: boolean, nullable: true}
+        weight_delta_kg: {type: string, nullable: true}
+        count_delta: {type: integer, nullable: true}
+    CompletionMutationResponse:
+      type: object
+      required: [data, correlation_id]
+      properties:
+        data:
+          type: object
+          required: [batch_id, status, version, analytics_result_id, data_quality, metrics, anomaly_codes]
+          properties:
+            batch_id: {type: string, format: uuid}
+            status: {type: string, enum: [COMPLETED]}
+            version: {type: integer, minimum: 1}
+            analytics_result_id: {type: string, format: uuid}
+            data_quality: {type: string, enum: [COMPLETE, PARTIAL, MISSING]}
+            metrics: {$ref: '#/components/schemas/AnalyticsMetrics'}
+            anomaly_codes: {type: array, items: {type: string}}
+        correlation_id: {type: string}
+        event_id: {type: string, format: uuid}
+        event_state: {type: string, enum: [PENDING, REPLAYED]}
+    ProcessingSummary:
+      type: object
+      required: [batch_id, status, version, evidence_status]
+      properties:
+        batch_id: {type: string, format: uuid}
+        status: {type: string, enum: [COLLECTED, VERIFIED, RECYCLED, COMPLETED]}
+        version: {type: integer}
+        evidence_status: {type: string, enum: [PRESENT, ABSENT], description: Evidence presence is independent of treatment data quality; rejected uploads are not represented.}
+    ProcessingListResponse:
+      type: object
+      required: [data, page, page_size, total_count, correlation_id]
+      properties:
+        data: {type: array, items: {$ref: '#/components/schemas/ProcessingSummary'}}
+        page: {type: integer}
+        page_size: {type: integer}
+        total_count: {type: integer}
+        correlation_id: {type: string}
+    ProcessingDetailResponse:
+      type: object
+      required: [data, correlation_id]
+      properties:
+        data:
+          type: object
+          properties:
+            batch_id: {type: string, format: uuid}
+            status: {type: string}
+            version: {type: integer}
+            declared_category: {type: string, nullable: true}
+            declared_quantity: {type: integer, nullable: true}
+            estimated_weight_kg: {type: string, nullable: true}
+            actual_category: {type: string, nullable: true}
+            actual_item_count: {type: integer, nullable: true}
+            actual_weight_kg: {type: string, nullable: true}
+            reused_kg: {type: string, nullable: true}
+            recycled_kg: {type: string, nullable: true}
+            disposed_kg: {type: string, nullable: true}
+            unknown_kg: {type: string, nullable: true}
+            diverted_kg: {type: string, nullable: true}
+            data_quality: {type: string, nullable: true, enum: [COMPLETE, PARTIAL, MISSING]}
+            evidence_status: {type: string, enum: [PRESENT, ABSENT], description: Evidence presence is independent of treatment data quality; rejected uploads are not represented.}
+            anomaly_codes: {type: array, items: {type: string}}
+        correlation_id: {type: string}
+    TimelineResponse:
+      type: object
+      required: [data, page, page_size, total_count, correlation_id]
+      properties:
+        data: {type: array, items: {$ref: '#/components/schemas/AuditTimelineEntry'}}
+        page: {type: integer, minimum: 1}
+        page_size: {type: integer, minimum: 1, maximum: 100}
+        total_count: {type: integer, minimum: 0}
+        correlation_id: {type: string}
+    AnomalyListResponse:
+      type: object
+      required: [data, page, page_size, total_count, correlation_id]
+      properties:
+        data: {type: array, items: {$ref: '#/components/schemas/Anomaly'}}
+        page: {type: integer, minimum: 1}
+        page_size: {type: integer, minimum: 1, maximum: 100}
+        total_count: {type: integer, minimum: 0}
+        correlation_id: {type: string}
+    ImpactResponse:
+      type: object
+      required: [data, correlation_id]
+      properties:
+        data:
+          type: object
+          required: [filter, totals, items, total_count]
+          properties:
+            filter:
+              type: object
+              description: The filter the report was built with. A null field was not supplied.
+              required: [completed_from, completed_to, category, processing_org_id]
+              properties:
+                completed_from: {type: string, nullable: true}
+                completed_to: {type: string, nullable: true}
+                category: {type: string, nullable: true}
+                processing_org_id: {type: string, nullable: true}
+            totals:
+              type: object
+              description: >-
+                Sums over the COMPLETED batches in scope. Weights are
+                two-decimal kilogram strings based on the received weight. A
+                weight is null when no batch in scope has it recorded. Batches
+                with no recorded outcome are counted in
+                missing_outcome_batch_count and add nothing to the reused,
+                recycled, disposed or diverted sums.
+              required: [completed_batch_count, complete_batch_count, partial_batch_count, missing_outcome_batch_count, received_kg, reused_kg, recycled_kg, disposed_kg, diverted_kg, unknown_kg, rule_versions]
+              properties:
+                completed_batch_count: {type: integer, minimum: 0}
+                complete_batch_count: {type: integer, minimum: 0}
+                partial_batch_count: {type: integer, minimum: 0}
+                missing_outcome_batch_count: {type: integer, minimum: 0}
+                received_kg: {type: string, nullable: true}
+                reused_kg: {type: string, nullable: true}
+                recycled_kg: {type: string, nullable: true}
+                disposed_kg: {type: string, nullable: true}
+                diverted_kg: {type: string, nullable: true}
+                unknown_kg: {type: string, nullable: true}
+                rule_versions: {type: array, items: {type: string}}
+            items: {type: array, items: {$ref: '#/components/schemas/ImpactResult'}}
+            total_count: {type: integer, minimum: 0}
+        correlation_id: {type: string}
+    AuditTimelineEntry:
+      type: object
+      required: [audit_id, batch_id, command_id, event_type, from_status, to_status, batch_version, sequence_in_command, occurred_at, correlation_id, details]
+      properties:
+        audit_id: {type: string, format: uuid}
+        batch_id: {type: string, format: uuid}
+        command_id: {type: string, format: uuid}
+        actor_user_id: {type: string, nullable: true}
+        actor_organisation_id: {type: string, nullable: true}
+        service_principal: {type: string, nullable: true}
+        event_type: {type: string}
+        from_status: {type: string}
+        to_status: {type: string}
+        batch_version: {type: integer, minimum: 1}
+        sequence_in_command: {type: integer, minimum: 1}
+        occurred_at: {type: string, format: date-time}
+        correlation_id: {type: string}
+        details: {type: object}
+    Anomaly:
+      type: object
+      required: [anomaly_id, batch_id, result_id, code, detected_at]
+      properties:
+        anomaly_id: {type: string, format: uuid}
+        batch_id: {type: string, format: uuid}
+        result_id: {type: string, format: uuid}
+        code: {type: string, enum: [CATEGORY_MISMATCH, COUNT_MISMATCH, WEIGHT_MISMATCH, MISSING_OUTCOME, UNALLOCATED_WEIGHT]}
+        declared_value: {type: string, nullable: true}
+        actual_value: {type: string, nullable: true}
+        delta_kg: {type: string, nullable: true}
+        detected_at: {type: string, format: date-time}
+    ImpactResult:
+      type: object
+      required: [result_id, batch_id, source_event_id, source_event_version, receipt_id, receipt_version, treatment_id, treatment_version, rule_version, input_hash, data_quality, metrics, anomaly_codes, acknowledged_at]
+      properties:
+        result_id: {type: string, format: uuid}
+        batch_id: {type: string, format: uuid}
+        source_event_id: {type: string, format: uuid}
+        source_event_version: {type: integer, minimum: 1}
+        receipt_id: {type: string, format: uuid}
+        receipt_version: {type: integer, minimum: 1}
+        treatment_id: {type: string, format: uuid}
+        treatment_version: {type: integer, minimum: 1}
+        rule_version: {type: string}
+        input_hash: {type: string, pattern: '^[0-9a-f]{64}$'}
+        data_quality: {type: string, enum: [COMPLETE, PARTIAL, MISSING]}
+        metrics: {$ref: '#/components/schemas/AnalyticsMetrics'}
+        anomaly_codes: {type: array, items: {type: string}}
+        acknowledged_at: {type: string, format: date-time}
+    BatchListResponse:
+      type: object
+      required: [data, page, page_size, total_count, correlation_id]
+      properties:
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/Batch'}
+        page: {type: integer, minimum: 1}
+        page_size: {type: integer, minimum: 1}
+        total_count: {type: integer, minimum: 0}
+        correlation_id: {type: string}
+    Opportunity:
+      type: object
+      required: [batch_id, status, version, claim_epoch, category, quantity, zone, collection_deadline, eligibility_reason]
+      properties:
+        batch_id: {type: string, format: uuid}
+        status: {type: string, enum: [MATCHED, APPROVED, ASSIGNED]}
+        version: {type: integer, minimum: 1}
+        claim_epoch: {type: string, pattern: '^[0-9]+$'}
+        category: {type: string}
+        quantity: {type: integer, minimum: 1}
+        estimated_weight_kg: {type: number, format: double}
+        zone: {type: string}
+        collection_deadline: {type: string, format: date-time}
+        eligibility_reason: {type: string}
+    OpportunityResponse:
+      type: object
+      required: [data, correlation_id]
+      properties:
+        data: {$ref: '#/components/schemas/Opportunity'}
+        correlation_id: {type: string}
+    OpportunityListResponse:
+      type: object
+      required: [data, page, page_size, total_count, correlation_id]
+      properties:
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/Opportunity'}
+        page: {type: integer, minimum: 1}
+        page_size: {type: integer, minimum: 1}
+        total_count: {type: integer, minimum: 0}
+        correlation_id: {type: string}
+    ClaimRequest:
+      type: object
+      required: [expected_version, claim_epoch]
+      additionalProperties: false
+      properties:
+        expected_version: {type: integer, minimum: 1}
+        claim_epoch: {type: string, pattern: '^[0-9]+$'}
+        notes: {type: string, maxLength: 255}
+    ClaimResult:
+      type: object
+      required: [batch_id, status, version, claim_epoch, claim_id, reservation_id, assignment_id, event_id, assignment_event_id, event_state, correlation_id]
+      properties:
+        batch_id: {type: string, format: uuid}
+        status: {type: string, enum: [ASSIGNED]}
+        version: {type: integer, minimum: 1}
+        claim_epoch: {type: string, pattern: '^[0-9]+$'}
+        claim_id: {type: string, format: uuid}
+        reservation_id: {type: string, format: uuid}
+        assignment_id: {type: string, format: uuid, description: Pending assignment selected by the round-robin allocator}
+        event_id: {type: string, format: uuid}
+        assignment_event_id: {type: string, format: uuid, description: CollectorAssigned outbox event emitted after ClaimConfirmed}
+        event_state: {type: string, enum: [PENDING, PUBLISHED]}
+        correlation_id: {type: string}
+    ClaimResponse:
+      type: object
+      required: [data, correlation_id]
+      properties:
+        data: {$ref: '#/components/schemas/ClaimResult'}
+        correlation_id: {type: string}
+    AssignmentSelectionRequest:
+      type: object
+      required: [expected_version, claim_epoch, collector_scope_id]
+      additionalProperties: false
+      properties:
+        expected_version: {type: integer, minimum: 1}
+        claim_epoch: {type: string, pattern: '^[0-9]+$'}
+        collector_scope_id: {type: string, format: uuid}
+    RejectAssignmentRequest:
+      type: object
+      required: [rejection_reason]
+      additionalProperties: false
+      properties:
+        rejection_reason: {type: string, maxLength: 100}
+    HandoffRequest:
+      type: object
+      required: [pickup_occurred_at, donor_representative_name, actual_item_count, verification_hash]
+      additionalProperties: false
+      properties:
+        pickup_occurred_at: {type: string, format: date-time}
+        donor_representative_name: {type: string, maxLength: 100}
+        actual_item_count: {type: integer, minimum: 1, maximum: 100000}
+        verification_hash: {type: string, pattern: '^[0-9a-fA-F]{64}$'}
+        notes: {type: string, maxLength: 500}
+    FailedPickupRequest:
+      type: object
+      required: [failure_reason]
+      additionalProperties: false
+      properties:
+        failure_reason:
+          type: string
+          maxLength: 32
+          enum: [DONOR_UNAVAILABLE, INCORRECT_ITEMS, ACCESS_DENIED, DAMAGED_HAZARDOUS, SAFETY_CANCEL]
+        observed_details: {type: string, maxLength: 500}
+    Assignment:
+      type: object
+      required: [assignment_id, batch_id, assignment_status, assignment_sequence, version]
+      properties:
+        assignment_id: {type: string, format: uuid}
+        batch_id: {type: string, format: uuid}
+        claim_id: {type: string, format: uuid}
+        collector_user_id: {type: string, format: uuid}
+        collector_scope_id: {type: string, format: uuid}
+        assignment_status: {type: string, enum: [PENDING, ACCEPTED, COMPLETED, FAILED, SUPERSEDED]}
+        assignment_sequence: {type: integer, minimum: 1}
+        version: {type: integer, minimum: 1}
+        batch_version: {type: integer, minimum: 1, description: Current batch version on assignment reads. Use for If-Match-Version; version is the assignment version.}
+        assigned_at: {type: string, format: date-time, description: When this assignment was made. A handoff pickup_occurred_at must not be earlier.}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    AssignmentCurrentState:
+      type: object
+      required: [assignment_id, assignment_status, assignment_version, batch_id, batch_status, batch_version]
+      properties:
+        assignment_id: {type: string, format: uuid}
+        assignment_status: {type: string, enum: [PENDING, ACCEPTED, COMPLETED, FAILED, SUPERSEDED]}
+        assignment_version: {type: integer, minimum: 1}
+        batch_id: {type: string, format: uuid}
+        batch_status: {type: string}
+        batch_version: {type: integer, minimum: 1}
+        current_assignment_id: {type: string, format: uuid, description: Present when the batch has a current assignment}
+    AssignmentMutationResponse:
+      type: object
+      required: [data, correlation_id]
+      properties:
+        data: {$ref: '#/components/schemas/Assignment'}
+        correlation_id: {type: string}
+        event_id: {type: string, format: uuid}
+        event_state: {type: string, enum: [PENDING, PUBLISHED]}
+    AssignmentListResponse:
+      type: object
+      required: [data, page, page_size, total_count, correlation_id]
+      properties:
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/Assignment'}
+        page: {type: integer, minimum: 1}
+        page_size: {type: integer, minimum: 1}
+        total_count: {type: integer, minimum: 0}
+        correlation_id: {type: string}
+        server_time: {type: string, format: date-time, description: Server clock when the list was read. A handoff pickup_occurred_at must not be later than the server time at send.}
+    ValidationDetails:
+      type: object
+      required: [field, reason]
+      properties:
+        field: {type: string, description: Request field that was refused, e.g. pickup_occurred_at}
+        reason: {type: string, enum: [PICKUP_TIME_IN_FUTURE, PICKUP_TIME_BEFORE_ASSIGNMENT]}
+        earliest_allowed: {type: string, format: date-time, description: Earliest accepted value (the assignment's assigned_at), when known}
+        latest_allowed: {type: string, format: date-time, description: Server time that refused the value; the latest accepted value at that moment}
+    RegisterRequest:
+      type: object
+      required: [email, password, display_name, role, organisation_name]
+      properties:
+        email: {type: string, format: email, maxLength: 254}
+        password: {type: string, minLength: 8, maxLength: 72, format: password}
+        display_name: {type: string, maxLength: 120}
+        role: {type: string, enum: [DONOR, COLLECTOR, RECYCLER]}
+        organisation_name: {type: string, maxLength: 160}
+    RegistrationResponse:
+      type: object
+      required: [user_id, organisation_id, role, status]
+      properties:
+        user_id: {type: string}
+        organisation_id: {type: string}
+        role: {type: string, enum: [DONOR, COLLECTOR, RECYCLER]}
+        status: {type: string, enum: [ACTIVE, PENDING]}
+    PendingRegistration:
+      type: object
+      required: [user_id, email, display_name, role, organisation_id, organisation_name, organisation_type, registered_at]
+      properties:
+        user_id: {type: string}
+        email: {type: string}
+        display_name: {type: string}
+        role: {type: string, enum: [COLLECTOR, RECYCLER]}
+        organisation_id: {type: string}
+        organisation_name: {type: string}
+        organisation_type: {type: string, enum: [COLLECTION_OPERATOR, PROCESSING_FACILITY]}
+        registered_at: {type: string, format: date-time}
+    RegistrationDecisionRequest:
+      type: object
+      properties:
+        reason: {type: string, maxLength: 255}
+    RegistrationDecision:
+      type: object
+      required: [user_id, organisation_id, decision, status, reviewed_by, reviewed_at]
+      properties:
+        user_id: {type: string}
+        organisation_id: {type: string}
+        decision: {type: string, enum: [APPROVED, REJECTED]}
+        status: {type: string, enum: [ACTIVE, DISABLED]}
+        reviewed_by: {type: string}
+        reviewed_at: {type: string, format: date-time}
+    ErrorResponse:
+      type: object
+      required: [code, message, correlation_id]
+      properties:
+        current_state:
+          description: Authoritative snapshot returned for stale assignment commands. Review before resubmitting.
+          allOf:
+            - {$ref: '#/components/schemas/AssignmentCurrentState'}
+        details:
+          description: Field-level reason for a VALIDATION_ERROR, when the server can name the field and the accepted range.
+          allOf:
+            - {$ref: '#/components/schemas/ValidationDetails'}
+        code: {type: string}
+        message: {type: string}
+        correlation_id: {type: string, maxLength: 128}
+    StatusResponse:
+      type: object
+      required: [status, mysql, redis]
+      properties:
+        status: {type: string, enum: [ok, ready, not_ready]}
+        mysql: {type: string, enum: [ok, unavailable]}
+        redis: {type: string, enum: [ok, unavailable]}
+  responses:
+    RegistrationDecided:
+      description: Registration decided
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, correlation_id]
+            properties:
+              data: {$ref: '#/components/schemas/RegistrationDecision'}
+              correlation_id: {type: string}
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    RegistrationConflict:
+      description: The email or organisation name is already registered, or the registration was already decided.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: REGISTRATION_CONFLICT
+            message: the account, organisation or registration decision already exists
+            correlation_id: corr-registration-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    BadRequest:
+      description: Missing or malformed request.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: INVALID_REQUEST
+            message: invalid request
+            correlation_id: corr-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    InvalidCredentials:
+      description: Generic authentication failure; user existence is not disclosed.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: AUTH_INVALID_CREDENTIALS
+            message: invalid credentials
+            correlation_id: corr-login-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    InvalidSession:
+      description: Missing, invalid, expired, revoked, or reused session/token.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: AUTH_INVALID_SESSION
+            message: invalid or expired session
+            correlation_id: corr-session-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    Forbidden:
+      description: Role, organisation, object, or assignment scope denied.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: FORBIDDEN
+            message: access denied
+            correlation_id: corr-forbidden-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    NotFound:
+      description: Resource not found or concealed by object-scope policy.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: NOT_FOUND
+            message: resource not found
+            correlation_id: corr-not-found-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    Conflict:
+      description: Stale version, invalid state, duplicate claim, or replay hash conflict.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: STALE_VERSION
+            message: The resource has changed. Refresh and retry.
+            correlation_id: corr-conflict-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    ValidationError:
+      description: Valid JSON with an invalid business value; no successful domain write.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: VALIDATION_ERROR
+            message: one or more fields are invalid
+            correlation_id: corr-validation-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    RateLimited:
+      description: Too many login or refresh requests from the client address.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: AUTH_RATE_LIMITED
+            message: too many requests
+            correlation_id: corr-rate-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+    ServiceUnavailable:
+      description: A required dependency is unavailable.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            code: SERVICE_UNAVAILABLE
+            message: service temporarily unavailable
+            correlation_id: corr-service-001
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}

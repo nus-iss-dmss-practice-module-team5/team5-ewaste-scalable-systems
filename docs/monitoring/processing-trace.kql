@@ -1,0 +1,18 @@
+// Run this entire file. Adjust AppPrefix and Lookback for your environment.
+let AppPrefix = "aca-ewastescalable-dev-";
+let Lookback = 1h;
+let Signals = union isfuzzy=true
+    (ContainerAppConsoleLogs_CL | project TimeGenerated, App=tostring(ContainerAppName_s), Message=tostring(Log_s)),
+    (ContainerAppConsoleLogs | project TimeGenerated, App=tostring(ContainerAppName), Message=tostring(Log))
+| where TimeGenerated > ago(Lookback) and App startswith AppPrefix
+| extend j=parse_json(Message)
+| where toint(j.telemetry_version)==1
+| extend Observation=tostring(j.observation), Outcome=tostring(j.outcome), Code=tostring(j.code),
+         Correlation=tostring(j.correlation_id), Batch=tostring(j.batch_id),
+         Operation=tostring(j.operation), DurationMs=todouble(j.duration_ms);
+let CorrelationFilter = "replace-with-correlation-id";
+Signals
+| where Correlation == CorrelationFilter
+| project TimeGenerated, App, Observation, Operation, Outcome, Code, Batch, Correlation,
+          EventId=tostring(j.event_id), CommandId=tostring(j.command_id), DurationMs
+| order by TimeGenerated asc

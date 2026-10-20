@@ -1,0 +1,25 @@
+// Run this entire file. Adjust AppPrefix and Lookback for your environment.
+let AppPrefix = "aca-ewastescalable-dev-";
+let Lookback = 1h;
+let Signals = union isfuzzy=true
+    (ContainerAppConsoleLogs_CL | project TimeGenerated, App=tostring(ContainerAppName_s), Message=tostring(Log_s)),
+    (ContainerAppConsoleLogs | project TimeGenerated, App=tostring(ContainerAppName), Message=tostring(Log))
+| where TimeGenerated > ago(Lookback) and App startswith AppPrefix
+| extend j=parse_json(Message)
+| where toint(j.telemetry_version)==1
+| extend Observation=tostring(j.observation), Outcome=tostring(j.outcome), Code=tostring(j.code),
+         Correlation=tostring(j.correlation_id), Batch=tostring(j.batch_id),
+         Operation=tostring(j.operation), DurationMs=todouble(j.duration_ms);
+let ExpectedApps = datatable(AppSuffix:string) ["api","analytics"]
+| extend App=strcat(AppPrefix,AppSuffix);
+let Latest = Signals | summarize LastSignal=max(TimeGenerated) by App;
+let Readiness = Signals | where Observation=="readiness"
+| summarize arg_max(TimeGenerated,*) by App
+| project App,LastReadiness=TimeGenerated,ReadinessOutcome=Outcome,ReadinessCode=Code;
+ExpectedApps
+| join kind=leftouter Latest on App
+| join kind=leftouter Readiness on App
+| project App,LastSignal,LastReadiness,ReadinessOutcome,ReadinessCode,
+          TelemetryAbsent=isnull(LastSignal) or LastSignal<ago(5m),
+          ReadinessUnknown=isnull(LastReadiness) or LastReadiness<ago(5m)
+// Absence/unknown requires investigation, never infer READY from missing data.

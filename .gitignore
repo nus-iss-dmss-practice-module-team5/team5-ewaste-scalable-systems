@@ -71,6 +71,10 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 
+# Allow environment definition tfvars (non-secret infrastructure parameters)
+!terraform/environments/environments/*.tfvars
+!terraform/environments/*.tfvars
+
 # Keep examples
 !*.tfvars.example
 !terraform.tfvars.example
@@ -119,3 +123,7 @@ zap-reports/
 # Local Azure files / credentials
 # =========================================================
 .azure/
+
+# =========================================================
+# Design analysis working documents
+docs/design-analysis/

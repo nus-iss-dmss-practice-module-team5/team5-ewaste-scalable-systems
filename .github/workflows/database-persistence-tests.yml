@@ -1,0 +1,38 @@
+name: Database Schema, Migration and Persistence Tests
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'database/**'
+      - 'scripts/test-persistence.sh'
+      - '.github/workflows/database-persistence-tests.yml'
+      - 'src/backend/**'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'database/**'
+      - 'scripts/test-persistence.sh'
+      - '.github/workflows/database-persistence-tests.yml'
+      - 'src/backend/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  persistence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify all schema and SQL persistence
+        run: ./scripts/test-persistence.sh
+      - name: Upload combined persistence evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: persistence-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/persistence/
+          retention-days: 14
+          if-no-files-found: warn

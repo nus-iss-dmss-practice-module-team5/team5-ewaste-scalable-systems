@@ -1,0 +1,461 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "MatchingInput.v1.schema.json",
+  "title": "EWCSB-2 immutable MatchingInputV1 (draft)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "run_id",
+    "decision_id",
+    "context_generation",
+    "trigger_id",
+    "trigger_type",
+    "evaluation_at",
+    "correlation_id",
+    "batch",
+    "rule_set",
+    "organisations",
+    "profile_snapshot_hash",
+    "input_hash"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": 1
+    },
+    "run_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "decision_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "context_generation": {
+      "$ref": "#/$defs/uint32"
+    },
+    "trigger_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "trigger_type": {
+      "$ref": "#/$defs/trigger"
+    },
+    "evaluation_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "correlation_id": {
+      "$ref": "#/$defs/correlation"
+    },
+    "batch": {
+      "$ref": "#/$defs/batch"
+    },
+    "rule_set": {
+      "$ref": "#/$defs/ruleSet"
+    },
+    "organisations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/organisation"
+      }
+    },
+    "profile_snapshot_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "input_hash": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "orgId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[\\x21-\\x7e]+$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "uint32": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "nonnegativeUint32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "epoch": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,19}$",
+      "description": "Canonical positive UINT64 decimal string; semantic validator additionally enforces <=18446744073709551615."
+    },
+    "configVersion": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,18}$",
+      "description": "Canonical positive SIGNED BIGINT decimal string; semantic validator additionally enforces <=9223372036854775807."
+    },
+    "money": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,9})\\.[0-9]{2}$",
+      "description": "Nonnegative DECIMAL(12,2) kilograms; exact decimal arithmetic, never binary floating point."
+    },
+    "weight": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,5})\\.[0-9]{2}$",
+      "description": "DECIMAL(8,2) batch kilograms; semantic bounds 0.10..50000.00 inclusive."
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "ICT_EQUIPMENT",
+        "LARGE_APPLIANCE",
+        "BATTERIES",
+        "CONSUMER_ELECTRONICS"
+      ]
+    },
+    "condition": {
+      "type": "string",
+      "enum": [
+        "FUNCTIONAL",
+        "REPAIRABLE",
+        "END_OF_LIFE"
+      ]
+    },
+    "zone": {
+      "type": "string",
+      "enum": [
+        "NORTH",
+        "SOUTH",
+        "EAST",
+        "WEST",
+        "CENTRAL"
+      ]
+    },
+    "correlation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Original event/DB correlation. Preserve1..128 characters in the body. HTTP X-Correlation-ID separately permits <=100 printable ASCII bytes; generate a transport UUID when the original does not fit."
+    },
+    "trigger": {
+      "type": "string",
+      "enum": [
+        "REQUEST_SUBMITTED",
+        "EXPLICIT_RUN"
+      ]
+    },
+    "bool": {
+      "type": "boolean"
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "is_active",
+        "version"
+      ],
+      "properties": {
+        "is_active": {
+          "$ref": "#/$defs/bool"
+        },
+        "version": {
+          "$ref": "#/$defs/configVersion"
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "accepted_conditions",
+        "supports_data_bearing",
+        "is_active",
+        "capacity_pool_id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "category": {
+          "$ref": "#/$defs/category"
+        },
+        "accepted_conditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/condition"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "supports_data_bearing": {
+          "$ref": "#/$defs/bool"
+        },
+        "is_active": {
+          "$ref": "#/$defs/bool"
+        },
+        "capacity_pool_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "version": {
+          "$ref": "#/$defs/configVersion"
+        }
+      }
+    },
+    "pool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "pool_code",
+        "total_kg",
+        "reserved_kg",
+        "is_active",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "pool_code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[\\x21-\\x7e]+$"
+        },
+        "total_kg": {
+          "$ref": "#/$defs/money"
+        },
+        "reserved_kg": {
+          "$ref": "#/$defs/money"
+        },
+        "is_active": {
+          "$ref": "#/$defs/bool"
+        },
+        "version": {
+          "$ref": "#/$defs/configVersion"
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "zone",
+        "minimum_lead_minutes",
+        "is_active",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "zone": {
+          "$ref": "#/$defs/zone"
+        },
+        "minimum_lead_minutes": {
+          "$ref": "#/$defs/nonnegativeUint32"
+        },
+        "is_active": {
+          "$ref": "#/$defs/bool"
+        },
+        "version": {
+          "$ref": "#/$defs/configVersion"
+        }
+      }
+    },
+    "organisation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recycler_org_id",
+        "organisation_type",
+        "organisation_status",
+        "profile",
+        "category_capabilities",
+        "capacity_pools",
+        "service_zones"
+      ],
+      "properties": {
+        "recycler_org_id": {
+          "$ref": "#/$defs/orgId"
+        },
+        "organisation_type": {
+          "const": "PROCESSING_FACILITY"
+        },
+        "organisation_status": {
+          "const": "ACTIVE"
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/profile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "category_capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        },
+        "capacity_pools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pool"
+          }
+        },
+        "service_zones": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverage"
+          }
+        }
+      }
+    },
+    "batch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "batch_id",
+        "organization_id",
+        "batch_version",
+        "claim_epoch",
+        "status",
+        "submitted_at",
+        "category",
+        "quantity",
+        "estimated_weight_kg",
+        "condition_rating",
+        "is_data_bearing",
+        "zone",
+        "collection_deadline"
+      ],
+      "properties": {
+        "batch_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/orgId"
+        },
+        "batch_version": {
+          "$ref": "#/$defs/uint32"
+        },
+        "claim_epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "status": {
+          "const": "SUBMITTED"
+        },
+        "submitted_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "category": {
+          "$ref": "#/$defs/category"
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "estimated_weight_kg": {
+          "$ref": "#/$defs/weight"
+        },
+        "condition_rating": {
+          "$ref": "#/$defs/condition"
+        },
+        "is_data_bearing": {
+          "$ref": "#/$defs/bool"
+        },
+        "zone": {
+          "$ref": "#/$defs/zone"
+        },
+        "collection_deadline": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "policy": {
+      "const": {
+        "categories": [
+          "ICT_EQUIPMENT",
+          "LARGE_APPLIANCE",
+          "BATTERIES",
+          "CONSUMER_ELECTRONICS"
+        ],
+        "conditions": [
+          "FUNCTIONAL",
+          "REPAIRABLE",
+          "END_OF_LIFE"
+        ],
+        "zones": [
+          "NORTH",
+          "SOUTH",
+          "EAST",
+          "WEST",
+          "CENTRAL"
+        ],
+        "weight_scale": 2,
+        "rule_ids": [
+          "M1",
+          "M2",
+          "M3",
+          "M4",
+          "M5"
+        ],
+        "predicates": {
+          "M1": "ACTIVE_EXACT_CATEGORY",
+            "M2": "ACTIVE_CAPABILITY_AND_PROFILE_CONDITION_AND_DATA",
+          "M3": "OWNED_ACTIVE_POOL_FULL_WEIGHT",
+          "M4": "ACTIVE_EXACT_ZONE",
+          "M5": "EVALUATION_BEFORE_DEADLINE_AND_LEAD_ARRIVAL_AT_OR_BEFORE_DEADLINE"
+        },
+        "failure_precedence": [
+          "M1",
+          "M2",
+          "M3",
+          "M4",
+          "M5"
+        ],
+        "ranking": false
+      },
+      "description": "Draft binary-v1 rules_json serialization; policy values reflect the accepted analysis, exact JSON member layout is a design draft."
+    },
+    "ruleSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_set_id",
+        "rule_set_version",
+        "rules_json"
+      ],
+      "properties": {
+        "rule_set_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "rule_set_version": {
+          "const": "binary-v1"
+        },
+        "rules_json": {
+          "$ref": "#/$defs/policy"
+        }
+      }
+    }
+  }
+}

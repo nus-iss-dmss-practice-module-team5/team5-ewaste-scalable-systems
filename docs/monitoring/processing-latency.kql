@@ -1,0 +1,19 @@
+// Run this entire file. Adjust AppPrefix and Lookback for your environment.
+let AppPrefix = "aca-ewastescalable-dev-";
+let Lookback = 1h;
+let Signals = union isfuzzy=true
+    (ContainerAppConsoleLogs_CL | project TimeGenerated, App=tostring(ContainerAppName_s), Message=tostring(Log_s)),
+    (ContainerAppConsoleLogs | project TimeGenerated, App=tostring(ContainerAppName), Message=tostring(Log))
+| where TimeGenerated > ago(Lookback) and App startswith AppPrefix
+| extend j=parse_json(Message)
+| where toint(j.telemetry_version)==1
+| extend Observation=tostring(j.observation), Outcome=tostring(j.outcome), Code=tostring(j.code),
+         Correlation=tostring(j.correlation_id), Batch=tostring(j.batch_id),
+         Operation=tostring(j.operation), DurationMs=todouble(j.duration_ms);
+Signals
+| where Observation in ("http_request","outbox_published","processing_step")
+| where isnotnull(DurationMs)
+| summarize Samples=count(), P50Ms=percentile(DurationMs,50), P95Ms=percentile(DurationMs,95),
+            P99Ms=percentile(DurationMs,99) by bin(TimeGenerated,5m),App,Observation,Operation,Outcome
+// These are per-stage durations, not end-to-end treatment/completion latency.
+| order by TimeGenerated desc

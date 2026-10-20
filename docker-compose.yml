@@ -1,0 +1,72 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ewaste
+      MYSQL_USER: ewaste_app
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/test/mysql/001-auth-schema.sql:/docker-entrypoint-initdb.d/001-auth-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - ewaste_internal
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    command: ["sh", "-c", "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - ewaste_internal
+
+  workflow-api:
+    build:
+      context: ./src/backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      EWASTE_AUTH_ACCESS_SECRET: ${EWASTE_AUTH_ACCESS_SECRET:?EWASTE_AUTH_ACCESS_SECRET must be set}
+      EWASTE_AUTH_REFRESH_SECRET: ${EWASTE_AUTH_REFRESH_SECRET:?EWASTE_AUTH_REFRESH_SECRET must be set}
+      EWASTE_AUTH_REFRESH_HASH_SECRET: ${EWASTE_AUTH_REFRESH_HASH_SECRET:?EWASTE_AUTH_REFRESH_HASH_SECRET must be set}
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8080/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - ewaste_internal
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  ewaste_internal:
+    driver: bridge

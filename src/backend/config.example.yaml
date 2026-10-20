@@ -1,0 +1,74 @@
+mode: development
+
+server:
+  port: ":8080"
+  allowed_origins:
+    - "http://localhost:3000"
+
+database:
+  host: "localhost"
+  port: 3306
+  name: "ewaste"
+  user: "ewaste_app"
+  # Supply the password through MYSQL_PASSWORD.
+  password: ""
+
+redis:
+  address: "localhost:6379"
+  # Supply the password through REDIS_PASSWORD.
+  password: ""
+  db: 0
+  tls_enabled: false
+
+kafka:
+  enabled: false
+  brokers:
+    - "localhost:9092"
+  client_id: "workflow-api"
+  # Azure Event Hubs uses Kafka over TLS with SASL/PLAIN.
+  tls_enabled: false
+  sasl_mechanism: "PLAIN"
+  sasl_username: ""
+  # Supply the password through EWASTE_KAFKA_SASL_PASSWORD or KAFKA_CONNECTION_STRING.
+  sasl_password: ""
+  publish_interval: "1s"
+  batch_size: 50
+  max_attempts: 5
+  lease_duration: "30s"
+  leader_lease_duration: "30s"
+  retry_backoff: "5s"
+  publish_timeout: "10s"
+
+auth:
+  issuer: "ewaste-workflow-api"
+  access_secret: ""
+  refresh_secret: ""
+  refresh_hash_secret: ""
+  # Supply through EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN; the analytics endpoint fails closed when empty.
+  analytics_service_token: ""
+  access_ttl: "15m"
+  refresh_ttl: "24h"
+
+storage:
+  # Use local for development/unit tests or azure_blob in Azure Container Apps.
+  # The disabled default fails closed until an adapter is explicitly selected.
+  adapter_type: "disabled"
+  azure_storage_account: ""
+  azure_storage_container: "evidence-private"
+  azure_storage_endpoint: ""
+  azure_use_managed_id: true
+  max_upload_size_bytes: 5242880
+  local_base_dir: "data/evidence"
+
+rate_limit:
+  requests: 10
+  window: "1m"
+
+logging:
+  level: "info"
+  file_path: "logs/workflow-api.log"
+  max_size_mb: 10
+  max_backups: 5
+  max_age_days: 30
+  compress: true
+  console: true

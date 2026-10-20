@@ -1,0 +1,5 @@
+package-lock.json
+.next
+coverage
+node_modules
+public

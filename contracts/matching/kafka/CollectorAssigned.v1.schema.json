@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ewaste:events:CollectorAssigned:v1",
+  "title": "CollectorAssigned event v1 — draft",
+  "description": "Committed collector choice: APPROVED to ASSIGNED. A replacement has a fresh assignment ID, previous assignment, next sequence and a different collector, preserving the accepted claim and epoch. This draft reuses the unchanged eleven-field v1 business envelope. Cross-record semantics and database checks are application obligations.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "schema_version",
+    "command_id",
+    "batch_id",
+    "batch_version",
+    "claim_epoch",
+    "sequence_in_command",
+    "occurred_at",
+    "correlation_id",
+    "data"
+  ],
+  "properties": {
+    "event_id": {
+      "$ref": "#/$defs/uuidV4"
+    },
+    "event_type": {
+      "const": "CollectorAssigned"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "command_id": {
+      "$ref": "#/$defs/uuidV4"
+    },
+    "batch_id": {
+      "$ref": "#/$defs/uuidV4"
+    },
+    "batch_version": {
+      "$ref": "#/$defs/positiveUint32"
+    },
+    "claim_epoch": {
+      "$ref": "#/$defs/positiveUint64String"
+    },
+    "sequence_in_command": {
+      "$ref": "#/$defs/positiveUint32"
+    },
+    "occurred_at": {
+      "$ref": "#/$defs/utcTimestamp"
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "claim_id",
+        "assignment_id",
+        "recycler_org_id",
+        "collector_org_id",
+        "collector_user_id",
+        "collector_scope_id",
+        "assigned_at",
+        "assignment_sequence",
+        "assignment_version",
+        "previous_assignment_id"
+      ],
+      "properties": {
+        "claim_id": {
+          "$ref": "#/$defs/uuidV4"
+        },
+        "assignment_id": {
+          "$ref": "#/$defs/uuidV4"
+        },
+        "recycler_org_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[\\x20-\\x7E]+$(?![\\s\\S])",
+          "description": "Existing canonical ASCII users.user_id or organisations.organisation_id; not assumed UUID."
+        },
+        "collector_org_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[\\x20-\\x7E]+$(?![\\s\\S])",
+          "description": "Existing canonical ASCII users.user_id or organisations.organisation_id; not assumed UUID."
+        },
+        "collector_user_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[\\x20-\\x7E]+$(?![\\s\\S])",
+          "description": "Existing canonical ASCII users.user_id or organisations.organisation_id; not assumed UUID."
+        },
+        "collector_scope_id": {
+          "$ref": "#/$defs/uuidV4"
+        },
+        "assigned_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "assignment_sequence": {
+          "$ref": "#/$defs/positiveUint64String"
+        },
+        "assignment_version": {
+          "$ref": "#/$defs/positiveInt64String"
+        },
+        "previous_assignment_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuidV4"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "uuidV4": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\\s\\S])",
+      "description": "Server-generated canonical lowercase UUIDv4."
+    },
+    "positiveUint32": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "positiveUint64String": {
+      "type": "string",
+      "pattern": "^(?:[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]|1844674407370955161[0-4]|18446744073709551615)$(?![\\s\\S])",
+      "description": "Canonical decimal string, inclusive range 1 through 18446744073709551615; no leading zeroes."
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{6}Z$(?![\\s\\S])",
+      "description": "UTC RFC3339, exactly six fractional digits, Z; MySQL DATETIME-compatible year. Enable format validation for calendar correctness."
+    },
+    "positiveInt64String": {
+      "type": "string",
+      "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)$(?![\\s\\S])",
+      "description": "Canonical decimal string 1..9223372036854775807; positive signed MySQL BIGINT, no leading zeroes."
+    }
+  }
+}

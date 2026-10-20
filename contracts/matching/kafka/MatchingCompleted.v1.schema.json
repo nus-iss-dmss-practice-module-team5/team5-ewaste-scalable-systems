@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ewaste:events:MatchingCompleted:v1",
+  "title": "MatchingCompleted event v1 — draft",
+  "description": "Proposed EWCSB-2 committed matching fact, emitted through the Go outbox. No per-recycler evidence or capacity is published. Ownership and event approval remain unassigned/unconfirmed. Cross-field checks are in kafka-boundary.md.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "schema_version",
+    "command_id",
+    "batch_id",
+    "batch_version",
+    "claim_epoch",
+    "sequence_in_command",
+    "occurred_at",
+    "correlation_id",
+    "data"
+  ],
+  "properties": {
+    "event_id": {
+      "$ref": "#/$defs/uuidV4"
+    },
+    "event_type": {
+      "const": "MatchingCompleted"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "command_id": {
+      "$ref": "#/$defs/uuidV4"
+    },
+    "batch_id": {
+      "$ref": "#/$defs/uuidV4"
+    },
+    "batch_version": {
+      "$ref": "#/$defs/positiveUint32"
+    },
+    "claim_epoch": {
+      "$ref": "#/$defs/positiveUint64String"
+    },
+    "sequence_in_command": {
+      "$ref": "#/$defs/positiveUint32"
+    },
+    "occurred_at": {
+      "$ref": "#/$defs/utcTimestamp"
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "decision_id",
+        "input_batch_version",
+        "outcome",
+        "primary_reason",
+        "evaluated_count",
+        "eligible_count",
+        "rule_set_version",
+        "evaluation_at"
+      ],
+      "properties": {
+        "decision_id": {
+          "$ref": "#/$defs/uuidV4"
+        },
+        "input_batch_version": {
+          "$ref": "#/$defs/positiveUint32"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "MATCHED",
+            "NO_MATCH"
+          ]
+        },
+        "primary_reason": {
+          "type": "string",
+          "enum": [
+            "ELIGIBLE_EXISTS",
+            "NO_ELIGIBLE_ORGANISATION",
+            "NO_APPROVED_ORGANISATION"
+          ]
+        },
+        "evaluated_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "eligible_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "rule_set_version": {
+          "const": "binary-v1"
+        },
+        "evaluation_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        }
+      },
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "MATCHED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "eligible_count": {
+                "minimum": 1
+              },
+              "evaluated_count": {
+                "minimum": 1
+              },
+              "primary_reason": {
+                "const": "ELIGIBLE_EXISTS"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "eligible_count": {
+                "const": 0
+              },
+              "primary_reason": {
+                "enum": [
+                  "NO_ELIGIBLE_ORGANISATION",
+                  "NO_APPROVED_ORGANISATION"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluated_count": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "NO_MATCH"
+              },
+              "primary_reason": {
+                "const": "NO_APPROVED_ORGANISATION"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "primary_reason": {
+                "enum": [
+                  "ELIGIBLE_EXISTS",
+                  "NO_ELIGIBLE_ORGANISATION"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "uuidV4": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\\s\\S])",
+      "description": "Server-generated canonical lowercase UUIDv4."
+    },
+    "positiveUint32": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "positiveUint64String": {
+      "type": "string",
+      "pattern": "^(?:[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]|1844674407370955161[0-4]|18446744073709551615)$(?![\\s\\S])",
+      "description": "Canonical decimal string, inclusive range 1 through 18446744073709551615; no leading zeroes."
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{6}Z$(?![\\s\\S])",
+      "description": "UTC RFC3339, exactly six fractional digits, Z; MySQL DATETIME-compatible year. Enable format validation for calendar correctness."
+    }
+  }
+}

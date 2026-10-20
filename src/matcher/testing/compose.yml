@@ -1,0 +1,123 @@
+# Isolated local verification only. No ports or production credentials are used.
+services:
+  mysql:
+    image: mysql:8.4
+    # Disposable fault-injection database only; permits the rollback test trigger.
+    command: [--log-bin-trust-function-creators=1]
+    environment:
+      MYSQL_DATABASE: matcher_test
+      MYSQL_USER: matcher
+      MYSQL_PASSWORD: matcher-local-only
+      MYSQL_ROOT_PASSWORD: matcher-root-local-only
+      TZ: UTC
+    healthcheck:
+      test: [CMD-SHELL, 'mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent']
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    volumes:
+      - mysql-data:/var/lib/mysql
+  redis:
+    image: redis:7.4
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+  migrate:
+    build:
+      context: ../../../database
+    volumes:
+      - ../../../database:/liquibase/changelog:ro
+    working_dir: /liquibase/changelog
+    environment:
+      LIQUIBASE_COMMAND_URL: jdbc:mysql://mysql:3306/matcher_test?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      LIQUIBASE_COMMAND_USERNAME: matcher
+      LIQUIBASE_COMMAND_PASSWORD: matcher-local-only
+      LIQUIBASE_COMMAND_CHANGELOG_FILE: changelog-master.yaml
+      LIQUIBASE_SEARCH_PATH: /liquibase/changelog
+    command: [update, --context-filter=seed]
+    depends_on:
+      mysql:
+        condition: service_healthy
+  kafka:
+    image: apache/kafka:4.1.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+    healthcheck:
+      test: [CMD-SHELL, '/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list >/dev/null 2>&1']
+      interval: 3s
+      timeout: 10s
+      retries: 30
+  tests:
+    build:
+      context: ../../..
+      dockerfile: src/matcher/testing/Dockerfile
+    environment:
+      MATCHER_TEST_BROKER: kafka:9092
+      MATCHER_TEST_API: http://api:8080
+      MATCHER_TEST_MYSQL: mysql
+      ANALYTICS_SERVICE_TOKEN: local-analytics-service-token-at-least-32-characters
+    command: [python, -m, unittest, discover, -s, src/matcher/tests, -v]
+    depends_on:
+      kafka:
+        condition: service_healthy
+  api:
+    build:
+      context: ../../backend
+    environment:
+      EWASTE_MODE: development
+      EWASTE_SERVER_PORT: ':8080'
+      EWASTE_DATABASE_HOST: mysql
+      EWASTE_DATABASE_PORT: 3306
+      EWASTE_DATABASE_NAME: matcher_test
+      EWASTE_DATABASE_USER: matcher
+      MYSQL_PASSWORD: matcher-local-only
+      EWASTE_REDIS_ADDRESS: redis:6379
+      EWASTE_AUTH_ACCESS_SECRET: local-access-secret-at-least-32-characters
+      EWASTE_AUTH_REFRESH_SECRET: local-refresh-secret-at-least-32-characters
+      EWASTE_AUTH_REFRESH_HASH_SECRET: local-refresh-hash-at-least-32-characters
+      EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN: local-analytics-service-token-at-least-32-characters
+      EWASTE_MATCHING_ENABLED: 'true'
+      EWASTE_MATCHING_ISSUER: matcher-integration-test
+      EWASTE_MATCHING_AUDIENCE: matching-api
+      EWASTE_MATCHING_SIGNING_SECRET: local-matching-secret-at-least-32-characters
+      EWASTE_KAFKA_ENABLED: 'true'
+      EWASTE_KAFKA_BROKERS: kafka:9092
+      EWASTE_KAFKA_TLS_ENABLED: 'false'
+      EWASTE_KAFKA_SASL_USERNAME: ''
+      EWASTE_KAFKA_SASL_PASSWORD: ''
+      EWASTE_KAFKA_BATCH_SIZE: 50
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+  go-tests:
+    image: golang:1.26-alpine
+    working_dir: /repo/src/backend
+    volumes:
+      - ../../..:/repo
+      - go-mod:/go/pkg/mod
+      - go-build:/root/.cache/go-build
+    environment:
+      MATCHER_TEST_DSN: matcher:matcher-local-only@tcp(mysql:3306)/matcher_test?parseTime=true&loc=UTC
+    command: [go, test, ./...]
+volumes:
+  mysql-data:
+  go-mod:
+  go-build:

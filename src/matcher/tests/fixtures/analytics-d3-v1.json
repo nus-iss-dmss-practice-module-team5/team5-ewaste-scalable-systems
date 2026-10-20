@@ -1,0 +1,709 @@
+{
+  "rule_version": "d3-v1",
+  "cases": [
+    {
+      "id": "R01",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": "2.00",
+          "recycled_kg": "9.00",
+          "disposed_kg": "1.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "11.00",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.00",
+          "count_delta": 0
+        },
+        "anomaly_codes": []
+      }
+    },
+    {
+      "id": "R02",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "BATTERIES",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": "2.00",
+          "recycled_kg": "9.00",
+          "disposed_kg": "1.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "11.00",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": false,
+          "weight_delta_kg": "0.00",
+          "count_delta": 0
+        },
+        "anomaly_codes": [
+          "CATEGORY_MISMATCH"
+        ]
+      }
+    },
+    {
+      "id": "R03",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 4,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": "2.00",
+          "recycled_kg": "9.00",
+          "disposed_kg": "1.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "11.00",
+          "declared_quantity": 5,
+          "actual_item_count": 4,
+          "category_match": true,
+          "weight_delta_kg": "0.00",
+          "count_delta": -1
+        },
+        "anomaly_codes": [
+          "COUNT_MISMATCH"
+        ]
+      }
+    },
+    {
+      "id": "R04",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.01",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.01",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.01",
+          "reused_kg": "2.00",
+          "recycled_kg": "9.01",
+          "disposed_kg": "1.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "11.01",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.01",
+          "count_delta": 0
+        },
+        "anomaly_codes": [
+          "WEIGHT_MISMATCH"
+        ]
+      }
+    },
+    {
+      "id": "R05",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "11.99",
+        "reused_kg": "2.00",
+        "recycled_kg": "8.99",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "11.99",
+          "reused_kg": "2.00",
+          "recycled_kg": "8.99",
+          "disposed_kg": "1.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "10.99",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "-0.01",
+          "count_delta": 0
+        },
+        "anomaly_codes": [
+          "WEIGHT_MISMATCH"
+        ]
+      }
+    },
+    {
+      "id": "R06",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "BATTERIES",
+        "actual_item_count": 4,
+        "actual_weight_kg": "10.50",
+        "reused_kg": "2.00",
+        "recycled_kg": "7.50",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "10.50",
+          "reused_kg": "2.00",
+          "recycled_kg": "7.50",
+          "disposed_kg": "1.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "9.50",
+          "declared_quantity": 5,
+          "actual_item_count": 4,
+          "category_match": false,
+          "weight_delta_kg": "-1.50",
+          "count_delta": -1
+        },
+        "anomaly_codes": [
+          "CATEGORY_MISMATCH",
+          "COUNT_MISMATCH",
+          "WEIGHT_MISMATCH"
+        ]
+      }
+    },
+    {
+      "id": "T01",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": "2.00",
+          "recycled_kg": "9.00",
+          "disposed_kg": "1.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "11.00",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.00",
+          "count_delta": 0
+        },
+        "anomaly_codes": []
+      }
+    },
+    {
+      "id": "T02",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "2.00",
+        "recycled_kg": "8.00",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "PARTIAL",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": "2.00",
+          "recycled_kg": "8.00",
+          "disposed_kg": "1.00",
+          "unknown_kg": "1.00",
+          "diverted_kg": "10.00",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.00",
+          "count_delta": 0
+        },
+        "anomaly_codes": [
+          "UNALLOCATED_WEIGHT"
+        ]
+      }
+    },
+    {
+      "id": "T03",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": null,
+        "recycled_kg": null,
+        "disposed_kg": null
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "MISSING",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": null,
+          "recycled_kg": null,
+          "disposed_kg": null,
+          "unknown_kg": "12.00",
+          "diverted_kg": null,
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.00",
+          "count_delta": 0
+        },
+        "anomaly_codes": [
+          "MISSING_OUTCOME"
+        ]
+      }
+    },
+    {
+      "id": "T04",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.01",
+        "disposed_kg": "1.00"
+      },
+      "error": "OUTCOME_EXCEEDS_RECEIVED_WEIGHT"
+    },
+    {
+      "id": "T05",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "-1",
+        "recycled_kg": "12",
+        "disposed_kg": "1.00"
+      },
+      "error": "NEGATIVE_OUTCOME_WEIGHT"
+    },
+    {
+      "id": "T06",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "2.00",
+        "recycled_kg": null,
+        "disposed_kg": "1.00"
+      },
+      "error": "INCOMPLETE_ALLOCATION_OBJECT"
+    },
+    {
+      "id": "T07",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "12.00",
+        "recycled_kg": "0.00",
+        "disposed_kg": "0.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": "12.00",
+          "recycled_kg": "0.00",
+          "disposed_kg": "0.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "12.00",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.00",
+          "count_delta": 0
+        },
+        "anomaly_codes": []
+      }
+    },
+    {
+      "id": "T08",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "0.00",
+        "recycled_kg": "12.00",
+        "disposed_kg": "0.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": "0.00",
+          "recycled_kg": "12.00",
+          "disposed_kg": "0.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "12.00",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.00",
+          "count_delta": 0
+        },
+        "anomaly_codes": []
+      }
+    },
+    {
+      "id": "T09",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "0.00",
+        "recycled_kg": "0.00",
+        "disposed_kg": "12.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": "0.00",
+          "recycled_kg": "0.00",
+          "disposed_kg": "12.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "0.00",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.00",
+          "count_delta": 0
+        },
+        "anomaly_codes": []
+      }
+    },
+    {
+      "id": "P01",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.004",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "error": "EXCESS_PRECISION"
+    },
+    {
+      "id": "P02",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.005",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "error": "EXCESS_PRECISION"
+    },
+    {
+      "id": "P03",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "5.005",
+        "recycled_kg": "4.995",
+        "disposed_kg": "2"
+      },
+      "error": "EXCESS_PRECISION"
+    },
+    {
+      "id": "P04",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": "2.00",
+          "recycled_kg": "9.00",
+          "disposed_kg": "1.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "11.00",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.00",
+          "count_delta": 0
+        },
+        "anomaly_codes": []
+      }
+    },
+    {
+      "id": "P05",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.5",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.50",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.50",
+          "reused_kg": "2.00",
+          "recycled_kg": "9.50",
+          "disposed_kg": "1.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "11.50",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.50",
+          "count_delta": 0
+        },
+        "anomaly_codes": [
+          "WEIGHT_MISMATCH"
+        ]
+      }
+    },
+    {
+      "id": "P06",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "expected": {
+        "rule_version": "d3-v1",
+        "data_quality": "COMPLETE",
+        "metrics": {
+          "declared_weight_kg": "12.00",
+          "actual_weight_kg": "12.00",
+          "reused_kg": "2.00",
+          "recycled_kg": "9.00",
+          "disposed_kg": "1.00",
+          "unknown_kg": "0.00",
+          "diverted_kg": "11.00",
+          "declared_quantity": 5,
+          "actual_item_count": 5,
+          "category_match": true,
+          "weight_delta_kg": "0.00",
+          "count_delta": 0
+        },
+        "anomaly_codes": []
+      }
+    },
+    {
+      "id": "P07",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.000",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "error": "EXCESS_PRECISION"
+    },
+    {
+      "id": "V01",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": null,
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "error": "MISSING_RECEIPT"
+    },
+    {
+      "id": "V02",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 4.5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "error": "INVALID_ITEM_COUNT"
+    },
+    {
+      "id": "V03",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "OTHER",
+        "actual_item_count": 5,
+        "actual_weight_kg": "12.00",
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "error": "INVALID_CATEGORY"
+    },
+    {
+      "id": "V04",
+      "input": {
+        "rule_version": "d3-v1",
+        "declared_category": "ICT_EQUIPMENT",
+        "declared_quantity": 5,
+        "declared_weight_kg": "12.00",
+        "actual_category": "ICT_EQUIPMENT",
+        "actual_item_count": 5,
+        "actual_weight_kg": 12.0,
+        "reused_kg": "2.00",
+        "recycled_kg": "9.00",
+        "disposed_kg": "1.00"
+      },
+      "error": "INVALID_WEIGHT_FORMAT"
+    }
+  ]
+}

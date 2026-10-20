@@ -1,0 +1,649 @@
+name: CD - Multi-Environment Deployment & Evidence Pipeline
+
+on:
+  workflow_run:
+    workflows: ["Database - Liquibase Migration"]
+    types:
+      - completed
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+    paths:
+      - 'src/**'
+      - 'contracts/**'
+      - 'scripts/**'
+      - 'terraform/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: 'Target Azure Runtime Environment (dev, stg, prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+      services:
+        description: 'Services to ship: "all", or list e.g. "ui", "auth", "api", "claim", "custody", "matcher", "analytics"'
+        required: false
+        default: 'all'
+      rollback_tag:
+        description: 'Optional: Image tag to rollback to (e.g. "PREVIOUS" for automatic N-1 release, or exact tag dev-a1b2c3d). Leave empty for standard build.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+  actions: read
+
+concurrency:
+  group: cd-deployment-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================================
+  # STAGE 0: DYNAMIC ENVIRONMENT & SERVICE RESOLUTION
+  # ============================================================================
+  resolve-environment:
+    name: Resolve Target Environment
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_run') }}
+    outputs:
+      environment: ${{ steps.env_resolver.outputs.environment }}
+      is_production: ${{ steps.env_resolver.outputs.is_production }}
+      deployment_desc: ${{ steps.env_resolver.outputs.deployment_desc }}
+      resource_group: ${{ steps.env_resolver.outputs.resource_group }}
+      deploy_ui: ${{ steps.service_resolver.outputs.deploy_ui }}
+      deploy_auth: ${{ steps.service_resolver.outputs.deploy_auth }}
+      deploy_api: ${{ steps.service_resolver.outputs.deploy_api }}
+      deploy_claim: ${{ steps.service_resolver.outputs.deploy_claim }}
+      deploy_custody: ${{ steps.service_resolver.outputs.deploy_custody }}
+      deploy_matcher: ${{ steps.service_resolver.outputs.deploy_matcher }}
+      deploy_analytics: ${{ steps.service_resolver.outputs.deploy_analytics }}
+      ui_fqdn: ${{ steps.ui_resolver.outputs.ui_fqdn }}
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 50
+
+      - name: Download Target Environment from Database Workflow
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-environment
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: .environment
+        continue-on-error: true
+
+      # ------------------------------------------------------------------------
+      # QUEUE GUARD: Wait for in-progress Terraform or Database pipelines
+      # ------------------------------------------------------------------------
+      - name: Wait for Active Upstream Pipelines (Terraform & Database)
+        if: github.event_name != 'workflow_run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "=========================================================="
+          echo " Checking for running upstream pipelines on $REF_NAME..."
+          echo "=========================================================="
+
+          MAX_WAIT=900
+          WAITED=0
+          INTERVAL=15
+
+          while [ $WAITED -lt $MAX_WAIT ]; do
+            ACTIVE_TF=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "IaC - Create Cloud Resources (Dev, Stg, Prod)" \
+              --branch "$REF_NAME" \
+              --json databaseId,status \
+              --jq '.[] | select(.status == "in_progress" or .status == "queued") | .databaseId' 2>/dev/null || echo "")
+
+            ACTIVE_DB=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "Database - Liquibase Migration" \
+              --branch "$REF_NAME" \
+              --json databaseId,status \
+              --jq '.[] | select(.status == "in_progress" or .status == "queued") | .databaseId' 2>/dev/null || echo "")
+
+            if [ -z "$ACTIVE_TF" ] && [ -z "$ACTIVE_DB" ]; then
+              echo "No active Terraform or Database pipelines running."
+              break
+            fi
+
+            echo "Active upstream pipeline(s) detected:"
+            [ -n "$ACTIVE_TF" ] && echo " - Terraform Run(s): $ACTIVE_TF"
+            [ -n "$ACTIVE_DB" ] && echo " - Database Run(s): $ACTIVE_DB"
+            echo "Queuing up and waiting $INTERVAL seconds (elapsed: ${WAITED}s)..."
+            sleep $INTERVAL
+            WAITED=$((WAITED + INTERVAL))
+          done
+
+          if [ $WAITED -ge $MAX_WAIT ]; then
+            echo "::error::Timed out after $MAX_WAIT seconds waiting for upstream pipelines to complete."
+            exit 1
+          fi
+
+          LATEST_TF_STATUS=$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "IaC - Create Cloud Resources (Dev, Stg, Prod)" \
+            --branch "$REF_NAME" \
+            --limit 1 \
+            --json conclusion \
+            --jq '.[0].conclusion // "none"' 2>/dev/null || echo "none")
+
+          LATEST_DB_STATUS=$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "Database - Liquibase Migration" \
+            --branch "$REF_NAME" \
+            --limit 1 \
+            --json conclusion \
+            --jq '.[0].conclusion // "none"' 2>/dev/null || echo "none")
+
+          if [ "$LATEST_TF_STATUS" == "failure" ] || [ "$LATEST_TF_STATUS" == "cancelled" ]; then
+            echo "::error::Upstream Terraform pipeline finished with status '$LATEST_TF_STATUS'. Halting CD deployment immediately to protect environment."
+            exit 1
+          fi
+
+          if [ "$LATEST_DB_STATUS" == "failure" ] || [ "$LATEST_DB_STATUS" == "cancelled" ]; then
+            echo "::error::Upstream Database migration finished with status '$LATEST_DB_STATUS'. Halting CD deployment immediately to prevent deploying against unready schema."
+            exit 1
+          fi
+
+          echo "All upstream dependency checks passed successfully!"
+
+      - name: Determine Target Environment from Git Context
+        id: env_resolver
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          TARGET_ENV_INPUT: ${{ inputs.target_env }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_REF: ${{ github.ref }}
+          TRIGGERING_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          TARGET=""
+          DESC=""
+          if [ -f ".environment/target_env" ]; then
+            TARGET=$(tr -d ' \r\n' < .environment/target_env)
+            DESC="Automated pipeline cascade from Database Migration (Azure $(echo "$TARGET" | tr '[:lower:]' '[:upper:]'))"
+            echo "Loaded target environment from artifact: '$TARGET'"
+          elif [ -f ".environment/deployment-environment/target_env" ]; then
+            TARGET=$(tr -d ' \r\n' < .environment/deployment-environment/target_env)
+            DESC="Automated pipeline cascade from Database Migration (Azure $(echo "$TARGET" | tr '[:lower:]' '[:upper:]'))"
+            echo "Loaded target environment from artifact: '$TARGET'"
+          fi
+
+          if [ -z "$TARGET" ]; then
+            if [ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]; then
+              TARGET="$TARGET_ENV_INPUT"
+              DESC="Manual workflow dispatch to Azure $(echo "$TARGET" | tr '[:lower:]' '[:upper:]')"
+            elif [ "$GITHUB_EVENT_NAME" == "workflow_run" ]; then
+              if [ "$TRIGGERING_BRANCH" == "main" ]; then
+                TARGET="prod"
+                DESC="Automated production cascade from Database Migration (Azure PROD)"
+              else
+                TARGET="dev"
+                DESC="Automated development cascade from Database Migration (Azure DEV)"
+              fi
+            elif [ "$GITHUB_EVENT_NAME" == "pull_request" ] && [ "$GITHUB_BASE_REF" == "main" ]; then
+              TARGET="stg"
+              DESC="48-Hour Feature Freeze PR Staging Deployment (Azure STG for Evaluation)"
+            elif [ "$GITHUB_EVENT_NAME" == "push" ] && [ "$GITHUB_REF" == "refs/heads/main" ]; then
+              TARGET="prod"
+              DESC="Merged Production Release (Azure PROD - Signed & Locked Baseline)"
+            elif [ "$GITHUB_EVENT_NAME" == "push" ] && [ "$GITHUB_REF" == "refs/heads/dev" ]; then
+              TARGET="dev"
+              DESC="Active Development Continuous Integration Sandbox (Azure DEV)"
+            else
+              TARGET="dev"
+              DESC="Default Development Deployment (Azure DEV)"
+            fi
+          fi
+
+          echo "environment=$TARGET" >> $GITHUB_OUTPUT
+          echo "deployment_desc=$DESC" >> $GITHUB_OUTPUT
+
+          if [ "$TARGET" == "prod" ]; then
+            echo "is_production=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_production=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "resource_group=rg-ewastescalable-${TARGET}" >> $GITHUB_OUTPUT
+
+          echo "========================================================"
+          echo " Target Environment: $TARGET"
+          echo " Trigger Reason: $DESC"
+          echo " Resource Group: rg-ewastescalable-${TARGET}"
+          echo "========================================================"
+
+      - name: Determine Services to Deploy
+        id: service_resolver
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          RAW_SERVICES: ${{ inputs.services }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          SERVICES=$(echo "${RAW_SERVICES:-all}" | tr '[:upper:]' '[:lower:]' | xargs)
+
+          DEPLOY_UI="false"
+          DEPLOY_AUTH="false"
+          DEPLOY_API="false"
+          DEPLOY_CLAIM="false"
+          DEPLOY_CUSTODY="false"
+          DEPLOY_MATCHER="false"
+          DEPLOY_ANALYTICS="false"
+
+          if [ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]; then
+            if [ -z "$SERVICES" ] || [ "$SERVICES" == "all" ]; then
+              DEPLOY_UI="true"
+              DEPLOY_AUTH="true"
+              DEPLOY_API="true"
+              DEPLOY_CLAIM="true"
+              DEPLOY_CUSTODY="true"
+              DEPLOY_MATCHER="true"
+              DEPLOY_ANALYTICS="true"
+            else
+              [[ "$SERVICES" =~ (ui|frontend) ]] && DEPLOY_UI="true"
+              [[ "$SERVICES" =~ (auth|identity) ]] && DEPLOY_AUTH="true"
+              [[ "$SERVICES" =~ (api|batch|server) ]] && DEPLOY_API="true"
+              [[ "$SERVICES" =~ (claim) ]] && DEPLOY_CLAIM="true"
+              [[ "$SERVICES" =~ (custody) ]] && DEPLOY_CUSTODY="true"
+              [[ "$SERVICES" =~ (matcher) ]] && DEPLOY_MATCHER="true"
+              [[ "$SERVICES" =~ (analytic) ]] && DEPLOY_ANALYTICS="true"
+            fi
+          elif [ "$GITHUB_EVENT_NAME" == "workflow_run" ]; then
+            # Automated cascade from database migration: ship all services
+            DEPLOY_UI="true"
+            DEPLOY_AUTH="true"
+            DEPLOY_API="true"
+            DEPLOY_CLAIM="true"
+            DEPLOY_CUSTODY="true"
+            DEPLOY_MATCHER="true"
+            DEPLOY_ANALYTICS="true"
+          else
+            # Push or PR: detect changed files
+            if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
+              CHANGED=$(git diff --name-only origin/${GITHUB_BASE_REF:-main} HEAD 2>/dev/null || echo "")
+            else
+              BEFORE_COMMIT="$EVENT_BEFORE"
+              if [ -n "$BEFORE_COMMIT" ] && [ "$BEFORE_COMMIT" != "0000000000000000000000000000000000000000" ]; then
+                CHANGED=$(git diff --name-only "$BEFORE_COMMIT" HEAD 2>/dev/null || echo "")
+              else
+                CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+              fi
+            fi
+
+            # Check if global workflow or config files changed
+            if [ -z "$CHANGED" ] || echo "$CHANGED" | grep -qE '^(\.github/|terraform/)'; then
+              echo "Global, infra, or workflow changes detected. Deploying all services."
+              DEPLOY_UI="true"
+              DEPLOY_AUTH="true"
+              DEPLOY_API="true"
+              DEPLOY_CLAIM="true"
+              DEPLOY_CUSTODY="true"
+              DEPLOY_MATCHER="true"
+              DEPLOY_ANALYTICS="true"
+            else
+              if echo "$CHANGED" | grep -qE '^src/frontend/'; then DEPLOY_UI="true"; fi
+              if echo "$CHANGED" | grep -qE '^(src/backend/cmd/identity-access/|src/backend/internal/|src/backend/go\.)'; then DEPLOY_AUTH="true"; fi
+              if echo "$CHANGED" | grep -qE '^(src/backend/cmd/(batch-workflow|server)/|src/backend/internal/|src/backend/go\.)'; then DEPLOY_API="true"; fi
+              if echo "$CHANGED" | grep -qE '^(src/backend/cmd/claim-logistics/|src/backend/internal/|src/backend/go\.)'; then DEPLOY_CLAIM="true"; fi
+              if echo "$CHANGED" | grep -qE '^(src/backend/cmd/custody-verification/|src/backend/internal/|src/backend/go\.)'; then DEPLOY_CUSTODY="true"; fi
+              if echo "$CHANGED" | grep -qE '^(src/matcher/|contracts/matching/)'; then DEPLOY_MATCHER="true"; fi
+              if echo "$CHANGED" | grep -qE '^(src/matcher/|contracts/matching/|scripts/deploy-matcher\.sh)'; then DEPLOY_ANALYTICS="true"; fi
+            fi
+          fi
+
+          echo "deploy_ui=$DEPLOY_UI" >> "$GITHUB_OUTPUT"
+          echo "deploy_auth=$DEPLOY_AUTH" >> "$GITHUB_OUTPUT"
+          echo "deploy_api=$DEPLOY_API" >> "$GITHUB_OUTPUT"
+          echo "deploy_claim=$DEPLOY_CLAIM" >> "$GITHUB_OUTPUT"
+          echo "deploy_custody=$DEPLOY_CUSTODY" >> "$GITHUB_OUTPUT"
+          echo "deploy_matcher=$DEPLOY_MATCHER" >> "$GITHUB_OUTPUT"
+          echo "deploy_analytics=$DEPLOY_ANALYTICS" >> "$GITHUB_OUTPUT"
+
+          echo "========================================================"
+          echo " Planned Services to Deploy:"
+          echo " - UI (Next.js)            : $DEPLOY_UI"
+          echo " - Auth (Identity & Access): $DEPLOY_AUTH"
+          echo " - API (Batch Workflow)    : $DEPLOY_API"
+          echo " - Claim Logistics         : $DEPLOY_CLAIM"
+          echo " - Custody Verification    : $DEPLOY_CUSTODY"
+          echo " - Matching Worker         : $DEPLOY_MATCHER"
+          echo " - Analytics Worker        : $DEPLOY_ANALYTICS"
+          echo "========================================================"
+
+      - name: Resolve UI Entrypoint FQDN
+        id: ui_resolver
+        continue-on-error: true
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          TARGET_ENV: ${{ steps.env_resolver.outputs.environment }}
+          RG: ${{ steps.env_resolver.outputs.resource_group }}
+        run: |
+          set +e
+          SP_APP_ID=$(echo "$AZURE_CREDENTIALS" | jq -r .clientId 2>/dev/null)
+          SP_PASS=$(echo "$AZURE_CREDENTIALS" | jq -r .clientSecret 2>/dev/null)
+          SP_TENANT=$(echo "$AZURE_CREDENTIALS" | jq -r .tenantId 2>/dev/null)
+          SP_SUB=$(echo "$AZURE_CREDENTIALS" | jq -r .subscriptionId 2>/dev/null)
+
+          UI_FQDN=""
+          if [ -n "$SP_APP_ID" ] && [ -n "$SP_PASS" ]; then
+            az login --service-principal -u "$SP_APP_ID" -p "$SP_PASS" --tenant "$SP_TENANT" --output none 2>/dev/null
+            az account set --subscription "$SP_SUB" 2>/dev/null
+            UI_FQDN=$(az containerapp show --name "aca-ewastescalable-${TARGET_ENV}-ui" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || echo "")
+          fi
+          echo "ui_fqdn=$UI_FQDN" >> "$GITHUB_OUTPUT"
+          echo "Public Entrypoint UI FQDN: ${UI_FQDN:-'(not yet assigned)'}"
+
+  # ============================================================================
+  # STAGE 1: INDEPENDENT PER-SERVICE DEPLOYMENTS (PARALLEL EXECUTION)
+  # Each service executes its own Test → Build & Scan → Deploy stages
+  # ============================================================================
+  ship-ui:
+    name: Ship (ui)
+    needs: [resolve-environment]
+    if: needs.resolve-environment.outputs.deploy_ui == 'true'
+    uses: ./.github/workflows/service-pipeline.yml
+    with:
+      service: ui
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      resource_group: ${{ needs.resolve-environment.outputs.resource_group }}
+      commit: ${{ github.sha }}
+      rollback_tag: ${{ inputs.rollback_tag }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
+      MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
+      ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}
+
+  ship-auth:
+    name: Ship (identity-access)
+    needs: [resolve-environment]
+    if: needs.resolve-environment.outputs.deploy_auth == 'true'
+    uses: ./.github/workflows/service-pipeline.yml
+    with:
+      service: auth
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      resource_group: ${{ needs.resolve-environment.outputs.resource_group }}
+      commit: ${{ github.sha }}
+      rollback_tag: ${{ inputs.rollback_tag }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
+      MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
+      ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}
+
+  ship-api:
+    name: Ship (batch-workflow)
+    needs: [resolve-environment]
+    if: needs.resolve-environment.outputs.deploy_api == 'true'
+    uses: ./.github/workflows/service-pipeline.yml
+    with:
+      service: api
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      resource_group: ${{ needs.resolve-environment.outputs.resource_group }}
+      commit: ${{ github.sha }}
+      rollback_tag: ${{ inputs.rollback_tag }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
+      MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
+      ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}
+
+  ship-claim:
+    name: Ship (claim-logistics)
+    needs: [resolve-environment]
+    if: needs.resolve-environment.outputs.deploy_claim == 'true'
+    uses: ./.github/workflows/service-pipeline.yml
+    with:
+      service: claim
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      resource_group: ${{ needs.resolve-environment.outputs.resource_group }}
+      commit: ${{ github.sha }}
+      rollback_tag: ${{ inputs.rollback_tag }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
+      MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
+      ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}
+
+  ship-custody:
+    name: Ship (custody-verification)
+    needs: [resolve-environment]
+    if: needs.resolve-environment.outputs.deploy_custody == 'true'
+    uses: ./.github/workflows/service-pipeline.yml
+    with:
+      service: custody
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      resource_group: ${{ needs.resolve-environment.outputs.resource_group }}
+      commit: ${{ github.sha }}
+      rollback_tag: ${{ inputs.rollback_tag }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
+      MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
+      ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}
+
+  ship-matcher:
+    name: Ship (matching-worker)
+    needs: [resolve-environment]
+    if: needs.resolve-environment.outputs.deploy_matcher == 'true'
+    uses: ./.github/workflows/service-pipeline.yml
+    with:
+      service: matcher
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      resource_group: ${{ needs.resolve-environment.outputs.resource_group }}
+      commit: ${{ github.sha }}
+      rollback_tag: ${{ inputs.rollback_tag }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
+      MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
+      ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}
+
+  ship-analytics:
+    name: Ship (analytics-worker)
+    needs: [resolve-environment]
+    if: needs.resolve-environment.outputs.deploy_analytics == 'true'
+    uses: ./.github/workflows/service-pipeline.yml
+    with:
+      service: analytics
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      resource_group: ${{ needs.resolve-environment.outputs.resource_group }}
+      commit: ${{ github.sha }}
+      rollback_tag: ${{ inputs.rollback_tag }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
+      MATCHER_SIGNING_SECRET: ${{ secrets.MATCHER_SIGNING_SECRET }}
+      ANALYTICS_SERVICE_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}
+
+  # ============================================================================
+  # STAGE 2: DYNAMIC APPLICATION SECURITY TESTING (OWASP ZAP)
+  # ============================================================================
+  dast-security-scan:
+    name: OWASP ZAP DAST Scan (${{ needs.resolve-environment.outputs.environment }})
+    needs:
+      - resolve-environment
+      - ship-ui
+      - ship-auth
+      - ship-api
+      - ship-claim
+      - ship-custody
+      - ship-matcher
+      - ship-analytics
+    if: >-
+      always() &&
+      needs.resolve-environment.result == 'success' &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Execute OWASP ZAP Baseline Scan Against Public UI Gateway
+        if: needs.resolve-environment.outputs.ui_fqdn != ''
+        uses: zaproxy/action-baseline@7c4deb10e6261301961c86d65d54a516394f9aed # v0.14.0
+        with:
+          target: "https://${{ needs.resolve-environment.outputs.ui_fqdn }}"
+          cmd_options: '-a'
+          allow_issue_writing: false
+          fail_action: false
+
+      - name: Retain OWASP ZAP DAST Report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: zap-dast-${{ needs.resolve-environment.outputs.environment }}-${{ github.sha }}
+          path: |
+            report_html.html
+            report_md.md
+            report_json.json
+          retention-days: 30
+
+  # ============================================================================
+  # STAGE 3: POST-DEPLOYMENT SMOKE & AUDIT VERIFICATION
+  # ============================================================================
+  smoke-and-audit-verification:
+    name: Smoke & Audit Verification (${{ needs.resolve-environment.outputs.environment }})
+    needs:
+      - resolve-environment
+      - dast-security-scan
+      - ship-ui
+      - ship-auth
+      - ship-api
+      - ship-claim
+      - ship-custody
+      - ship-matcher
+      - ship-analytics
+    if: >-
+      always() &&
+      needs.resolve-environment.result == 'success' &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # ------------------------------------------------------------------------
+      # 3.1 PUBLIC ENTRYPOINT & REVERSE PROXY SMOKE TEST (Decision AD4)
+      # ------------------------------------------------------------------------
+      - name: Execute Seeded-User Login API Smoke Test via Public UI Gateway
+        env:
+          UI_FQDN: ${{ needs.resolve-environment.outputs.ui_fqdn }}
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+          SMOKE_TEST_EMAIL: ${{ vars.SMOKE_TEST_EMAIL || 'donor1@ewaste.test' }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD || 'TestOnly#2026!' }}
+        run: |
+          set -euo pipefail
+          : "${UI_FQDN:?UI FQDN is required for the login smoke test}"
+          API_URL="https://${UI_FQDN}/api/v1/auth/login"
+          CORRELATION_ID="smoke-api-${TARGET_ENV}-$(date +%s)"
+          RESPONSE_FILE=$(mktemp)
+          trap 'rm -f "$RESPONSE_FILE"' EXIT
+          LOGIN_PAYLOAD=$(jq -nc --arg email "$SMOKE_TEST_EMAIL" --arg password "$SMOKE_TEST_PASSWORD" \
+            '{email: $email, password: $password}')
+          echo "Executing API authentication test through Single Public Entry: $API_URL"
+
+          if ! HTTP_STATUS=$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output "$RESPONSE_FILE" --write-out '%{http_code}' -X POST "$API_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Correlation-ID: $CORRELATION_ID" \
+            --data "$LOGIN_PAYLOAD"); then
+            echo "::error::Login smoke test could not reach the UI gateway (correlation ID: $CORRELATION_ID)."
+            exit 1
+          fi
+          echo "API HTTP Response Status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Login smoke test expected HTTP 200, received $HTTP_STATUS (correlation ID: $CORRELATION_ID)."
+            exit 1
+          fi
+          # Validate the auth response without exposing access or refresh tokens.
+          if ! jq -e '(.access_token | type == "string" and length > 0) and
+            (.refresh_token | type == "string" and length > 0) and
+            .token_type == "Bearer"' "$RESPONSE_FILE" > /dev/null 2>&1; then
+            echo "::error::Login returned HTTP 200 without a valid token response."
+            exit 1
+          fi
+          echo "Login smoke test passed."
+
+          # A login can succeed while other services reject the JWT issuer.
+          # The smoke account must be a DONOR or COLLECTOR for this read.
+          ACCESS_TOKEN=$(jq -r '.access_token' "$RESPONSE_FILE")
+          echo "::add-mask::$ACCESS_TOKEN"
+          READ_URL="https://${UI_FQDN}/api/v1/batches?page_size=1"
+          CORRELATION_ID="smoke-read-${TARGET_ENV}-$(date +%s)"
+          if ! HTTP_STATUS=$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output "$RESPONSE_FILE" --write-out '%{http_code}' "$READ_URL" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "X-Correlation-ID: $CORRELATION_ID"); then
+            echo "::error::Authenticated API smoke test could not reach the batch service (correlation ID: $CORRELATION_ID)."
+            exit 1
+          fi
+          echo "Authenticated API HTTP Response Status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Authenticated API smoke test expected HTTP 200, received $HTTP_STATUS (correlation ID: $CORRELATION_ID)."
+            exit 1
+          fi
+          if ! jq -e '.data | type == "array"' "$RESPONSE_FILE" > /dev/null 2>&1; then
+            echo "::error::Authenticated API returned HTTP 200 without a valid batch list."
+            exit 1
+          fi
+          echo "Authenticated API smoke test passed."
+
+      # ------------------------------------------------------------------------
+      # 3.2 FRONTEND UI ACCESSIBILITY SMOKE TEST
+      # ------------------------------------------------------------------------
+      - name: Execute Frontend UI Endpoint Smoke Test
+        env:
+          UI_FQDN: ${{ needs.resolve-environment.outputs.ui_fqdn }}
+        run: |
+          set -euo pipefail
+          : "${UI_FQDN:?UI FQDN is required for the frontend smoke test}"
+          UI_URL="https://${UI_FQDN}/"
+          echo "Verifying Frontend UI accessibility at: $UI_URL"
+          if ! UI_STATUS=$(curl --silent --show-error --location --max-redirs 5 \
+            --connect-timeout 10 --max-time 30 --output /dev/null --write-out '%{http_code}' "$UI_URL"); then
+            echo "::error::Frontend smoke test could not reach the UI."
+            exit 1
+          fi
+          echo "UI HTTP Response Status: $UI_STATUS"
+          if [ "$UI_STATUS" != "200" ]; then
+            echo "::error::Frontend smoke test expected HTTP 200, received $UI_STATUS."
+            exit 1
+          fi
+
+      # ------------------------------------------------------------------------
+      # 3.3 DEPLOYMENT SUMMARY & ARCHIVAL BANNER
+      # ------------------------------------------------------------------------
+      - name: Confirm Deployment & Archival State
+        env:
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+          DEPLOYMENT_DESC: ${{ needs.resolve-environment.outputs.deployment_desc }}
+          RESOURCE_GROUP: ${{ needs.resolve-environment.outputs.resource_group }}
+          UI_FQDN: ${{ needs.resolve-environment.outputs.ui_fqdn }}
+        run: |
+          echo "======================================================================"
+          echo "  PER-SERVICE DEPLOYMENT & AUDIT SUITE COMPLETED SUCCESSFULLY"
+          echo "  - Environment Target: $TARGET_ENV"
+          echo "  - Deployment Scope: $DEPLOYMENT_DESC"
+          echo "  - Resource Group: $RESOURCE_GROUP"
+          echo "  - Per-Service Isolation: Decoupled Stages Tested, Built, Scanned & Deployed"
+          echo "  - Single Public Ingress Gateway Verified: https://$UI_FQDN"
+          echo "  - DAST Scan: OWASP ZAP Report Retained for Academic Review"
+          echo "======================================================================"

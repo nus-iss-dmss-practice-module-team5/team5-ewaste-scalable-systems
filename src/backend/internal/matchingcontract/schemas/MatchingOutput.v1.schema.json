@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "MatchingOutput.v1.schema.json",
+  "title": "EWCSB-2 deterministic MatchingOutputV1 (draft)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "run_id",
+    "decision_id",
+    "context_generation",
+    "input_hash",
+    "profile_snapshot_hash",
+    "batch_id",
+    "batch_version",
+    "claim_epoch",
+    "rule_set_id",
+    "evaluation_at",
+    "candidates",
+    "outcome",
+    "primary_reason",
+    "evaluated_count",
+    "eligible_count"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": 1
+    },
+    "run_id": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/uuid"
+    },
+    "decision_id": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/uuid"
+    },
+    "context_generation": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/uint32"
+    },
+    "input_hash": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/sha256"
+    },
+    "profile_snapshot_hash": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/sha256"
+    },
+    "batch_id": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/uuid"
+    },
+    "batch_version": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/uint32"
+    },
+    "claim_epoch": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/epoch"
+    },
+    "rule_set_id": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/uuid"
+    },
+    "evaluation_at": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/timestamp"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    },
+    "outcome": {
+      "enum": [
+        "MATCHED",
+        "NO_MATCH"
+      ]
+    },
+    "primary_reason": {
+      "enum": [
+        "ELIGIBLE_EXISTS",
+        "NO_ELIGIBLE_ORGANISATION",
+        "NO_APPROVED_ORGANISATION"
+      ]
+    },
+    "evaluated_count": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/nonnegativeUint32"
+    },
+    "eligible_count": {
+      "$ref": "MatchingInput.v1.schema.json#/$defs/nonnegativeUint32"
+    }
+  },
+  "$defs": {
+    "failedRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "reason_code"
+      ],
+      "properties": {
+        "rule_id": {
+          "enum": [
+            "M1",
+            "M2",
+            "M3",
+            "M4",
+            "M5"
+          ]
+        },
+        "reason_code": {
+          "enum": [
+            "CATEGORY_UNSUPPORTED",
+            "CAPABILITY_UNSUPPORTED",
+            "INSUFFICIENT_CAPACITY",
+            "CAPACITY_UNAVAILABLE",
+            "OUT_OF_SERVICE_ZONE",
+            "DEADLINE_UNACHIEVABLE"
+          ]
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_id",
+        "capability_version",
+        "service_zone_id",
+        "service_zone_version",
+        "missing_configuration"
+      ],
+      "properties": {
+        "capability_id": {
+          "anyOf": [
+            {
+              "$ref": "MatchingInput.v1.schema.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capability_version": {
+          "anyOf": [
+            {
+              "$ref": "MatchingInput.v1.schema.json#/$defs/configVersion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "service_zone_id": {
+          "anyOf": [
+            {
+              "$ref": "MatchingInput.v1.schema.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "service_zone_version": {
+          "anyOf": [
+            {
+              "$ref": "MatchingInput.v1.schema.json#/$defs/configVersion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "missing_configuration": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "PROFILE",
+              "CATEGORY_CAPABILITY",
+              "CAPACITY_POOL",
+              "SERVICE_ZONE"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recycler_org_id",
+        "profile_version",
+        "category_match",
+        "capability_match",
+        "capacity_available",
+        "zone_match",
+        "deadline_viable",
+        "is_matched",
+        "available_capacity_kg",
+        "capacity_pool_id",
+        "capacity_version",
+        "minimum_lead_minutes",
+        "feasible_at",
+        "reason_code",
+        "failed_rules_json",
+        "evidence_json"
+      ],
+      "properties": {
+        "recycler_org_id": {
+          "$ref": "MatchingInput.v1.schema.json#/$defs/orgId"
+        },
+        "profile_version": {
+          "anyOf": [
+            {
+              "$ref": "MatchingInput.v1.schema.json#/$defs/configVersion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "category_match": {
+          "$ref": "MatchingInput.v1.schema.json#/$defs/bool"
+        },
+        "capability_match": {
+          "$ref": "MatchingInput.v1.schema.json#/$defs/bool"
+        },
+        "capacity_available": {
+          "$ref": "MatchingInput.v1.schema.json#/$defs/bool"
+        },
+        "zone_match": {
+          "$ref": "MatchingInput.v1.schema.json#/$defs/bool"
+        },
+        "deadline_viable": {
+          "$ref": "MatchingInput.v1.schema.json#/$defs/bool"
+        },
+        "is_matched": {
+          "$ref": "MatchingInput.v1.schema.json#/$defs/bool"
+        },
+        "available_capacity_kg": {
+          "anyOf": [
+            {
+              "$ref": "MatchingInput.v1.schema.json#/$defs/money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capacity_pool_id": {
+          "anyOf": [
+            {
+              "$ref": "MatchingInput.v1.schema.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capacity_version": {
+          "anyOf": [
+            {
+              "$ref": "MatchingInput.v1.schema.json#/$defs/configVersion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "minimum_lead_minutes": {
+          "anyOf": [
+            {
+              "$ref": "MatchingInput.v1.schema.json#/$defs/nonnegativeUint32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "feasible_at": {
+          "anyOf": [
+            {
+              "$ref": "MatchingInput.v1.schema.json#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason_code": {
+          "enum": [
+            "ELIGIBLE",
+            "CATEGORY_UNSUPPORTED",
+            "CAPABILITY_UNSUPPORTED",
+            "INSUFFICIENT_CAPACITY",
+            "CAPACITY_UNAVAILABLE",
+            "OUT_OF_SERVICE_ZONE",
+            "DEADLINE_UNACHIEVABLE"
+          ]
+        },
+        "failed_rules_json": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/failedRule"
+          }
+        },
+        "evidence_json": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    }
+  }
+}

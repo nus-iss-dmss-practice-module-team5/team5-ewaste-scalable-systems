@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ewaste:matching:quarantine:v1",
+  "title": "Matching quarantine v1 — draft operational record",
+  "description": "Sanitised operational evidence, not a business matching decision. Raw bytes, credentials and stack traces are forbidden.",
+  "type": "object",
+  "required": [
+    "dlq_schema_version",
+    "quarantine_id",
+    "source_topic",
+    "source_partition",
+    "source_offset",
+    "source_event_id",
+    "original_record_sha256",
+    "error_code",
+    "failed_stage",
+    "retry_count",
+    "first_seen_at",
+    "last_seen_at",
+    "correlation_id"
+  ],
+  "properties": {
+    "dlq_schema_version": {
+      "const": 1
+    },
+    "quarantine_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_topic": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 249
+    },
+    "source_partition": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "source_offset": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,18})$",
+      "description": "Canonical decimal string 0..9223372036854775807; enforce numeric upper bound."
+    },
+    "source_event_id": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/uuidV4"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "original_record_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "error_code": {
+      "type": "string",
+      "enum": [
+        "INVALID_CONTRACT",
+        "UNSUPPORTED_SCHEMA_VERSION",
+        "UNSUPPORTED_RULE_SET",
+        "IDEMPOTENCY_CONFLICT",
+        "INVALID_RESULT",
+        "DATA_INTEGRITY_ERROR",
+        "LIMIT_EXCEEDED",
+        "CONTEXT_CHURN",
+        "RETRY_EXHAUSTED"
+      ]
+    },
+    "failed_stage": {
+      "type": "string",
+      "enum": [
+        "VALIDATE_EVENT",
+        "PREPARE",
+        "EVALUATE",
+        "COMMIT"
+      ]
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "description": "Retries in this delivery cycle, not across all restarts."
+    },
+    "first_seen_at": {
+      "$ref": "#/$defs/utcTimestamp"
+    },
+    "last_seen_at": {
+      "$ref": "#/$defs/utcTimestamp"
+    },
+    "correlation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "original_event": {
+      "$ref": "RequestSubmitted.v1.schema.json",
+      "description": "Optional safe allowlisted reconstruction of a valid RequestSubmitted; omit for malformed or unsupported records. Do not copy unknown properties."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "uuidV4": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\\s\\S])",
+      "description": "Server-generated canonical lowercase UUIDv4."
+    },
+    "positiveUint32": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "positiveUint64String": {
+      "type": "string",
+      "pattern": "^(?:[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]|1844674407370955161[0-4]|18446744073709551615)$(?![\\s\\S])",
+      "description": "Canonical decimal string, inclusive range 1 through 18446744073709551615; no leading zeroes."
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{6}Z$(?![\\s\\S])",
+      "description": "UTC RFC3339, exactly six fractional digits, Z; MySQL DATETIME-compatible year. Enable format validation for calendar correctness."
+    }
+  }
+}

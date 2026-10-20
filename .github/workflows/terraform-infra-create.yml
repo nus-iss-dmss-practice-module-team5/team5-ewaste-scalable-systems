@@ -1,0 +1,452 @@
+name: "IaC - Create Cloud Resources (Dev, Stg, Prod)"
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-infra-create.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-infra-create.yml'
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: 'Target Azure Runtime Environment (dev, stg, prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+      action:
+        description: 'Terraform Action to execute (apply, plan)'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - apply
+          - plan
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+concurrency:
+  group: terraform-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================================
+  # STAGE 0: DYNAMIC ENVIRONMENT RESOLUTION
+  # ============================================================================
+  resolve-environment:
+    name: Resolve Target Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env_resolver.outputs.environment }}
+      is_production: ${{ steps.env_resolver.outputs.is_production }}
+      deployment_desc: ${{ steps.env_resolver.outputs.deployment_desc }}
+    steps:
+      - name: Determine Target Environment from Git Context
+        id: env_resolver
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          TARGET_ENV_INPUT: ${{ inputs.target_env }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]; then
+            TARGET="$TARGET_ENV_INPUT"
+            DESC="Manual workflow dispatch to Azure $(echo "$TARGET" | tr '[:lower:]' '[:upper:]')"
+          elif [ "$GITHUB_EVENT_NAME" == "pull_request" ] && [ "$GITHUB_BASE_REF" == "main" ]; then
+            TARGET="stg"
+            DESC="48-Hour Feature Freeze PR Staging Deployment (Azure STG for Evaluation)"
+          elif [ "$GITHUB_EVENT_NAME" == "push" ] && [ "$GITHUB_REF" == "refs/heads/main" ]; then
+            TARGET="prod"
+            DESC="Merged Production Release (Azure PROD - Signed & Locked Baseline)"
+          elif [ "$GITHUB_EVENT_NAME" == "push" ] && [ "$GITHUB_REF" == "refs/heads/dev" ]; then
+            TARGET="dev"
+            DESC="Active Development Continuous Integration Sandbox (Azure DEV)"
+          else
+            TARGET="dev"
+            DESC="Default Development Deployment (Azure DEV)"
+          fi
+
+          echo "environment=$TARGET" >> $GITHUB_OUTPUT
+          echo "deployment_desc=$DESC" >> $GITHUB_OUTPUT
+
+          if [ "$TARGET" == "prod" ]; then
+            echo "is_production=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_production=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "========================================================"
+          echo " Target Environment: $TARGET"
+          echo " Trigger Reason: $DESC"
+          echo "========================================================"
+
+  # ============================================================================
+  # STAGE 1: INFRASTRUCTURE PROVISIONING (Terraform)
+  # ============================================================================
+  provision-infrastructure:
+    name: Terraform (${{ needs.resolve-environment.outputs.environment }})
+    needs: [resolve-environment]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-environment.outputs.environment }}
+    outputs:
+      acr_server: ${{ steps.tf_outputs.outputs.acr_server }}
+      aca_env_name: ${{ steps.tf_outputs.outputs.aca_env_name }}
+      resource_group: ${{ steps.tf_outputs.outputs.resource_group }}
+      mysql_fqdn: ${{ steps.tf_outputs.outputs.mysql_fqdn }}
+      mysql_db: ${{ steps.tf_outputs.outputs.mysql_db }}
+      mysql_admin_username: ${{ steps.tf_outputs.outputs.mysql_admin_username }}
+      mysql_admin_password: ${{ steps.tf_outputs.outputs.mysql_admin_password }}
+      redis_address: ${{ steps.tf_outputs.outputs.redis_address }}
+      redis_password: ${{ steps.tf_outputs.outputs.redis_password }}
+      aca_identity_id: ${{ steps.tf_outputs.outputs.aca_identity_id }}
+      key_vault_uri: ${{ steps.tf_outputs.outputs.key_vault_uri }}
+      aca_api_fqdn: ${{ steps.tf_outputs.outputs.aca_api_fqdn }}
+      aca_ui_fqdn: ${{ steps.tf_outputs.outputs.aca_ui_fqdn }}
+      aca_analytics_fqdn: ${{ steps.tf_outputs.outputs.aca_analytics_fqdn }}
+      storage_account_name: ${{ steps.tf_outputs.outputs.storage_account_name }}
+      storage_blob_endpoint: ${{ steps.tf_outputs.outputs.storage_blob_endpoint }}
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Microsoft Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Register Azure Resource Providers
+        run: |
+          echo "Registering Azure Container Apps and Monitor resource providers..."
+          az provider register --namespace Microsoft.App --wait
+          az provider register --namespace Microsoft.OperationalInsights --wait
+          az provider register --namespace Microsoft.ContainerService --wait
+
+      - name: Set ARM Credentials for Terraform
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+        run: |
+          CLIENT_ID=$(echo "$AZURE_CREDENTIALS" | jq -r .clientId)
+          CLIENT_SECRET=$(echo "$AZURE_CREDENTIALS" | jq -r .clientSecret)
+          SUBSCRIPTION_ID=$(echo "$AZURE_CREDENTIALS" | jq -r .subscriptionId)
+          TENANT_ID=$(echo "$AZURE_CREDENTIALS" | jq -r .tenantId)
+
+          echo "ARM_CLIENT_ID=$CLIENT_ID" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$CLIENT_SECRET" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
+
+      - name: Setup Terraform CLI
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.0
+
+      - name: Validate Matcher Infrastructure Configuration
+        run: |
+          terraform -chdir=terraform/environments init -backend=false -input=false
+          terraform -chdir=terraform/environments validate
+          terraform -chdir=terraform/environments test -filter=tests/matcher.tftest.hcl
+
+      # ------------------------------------------------------------------------
+      # 1.1 SHARED INFRASTRUCTURE (ACR & Log Analytics Workspace)
+      # ------------------------------------------------------------------------
+      - name: Apply Shared Infrastructure
+        env:
+          TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
+          TF_STATE_SA_ACCESS_KEY: ${{ secrets.TF_STATE_SA_ACCESS_KEY }}
+          TERRAFORM_ACTION: ${{ inputs.action }}
+          TF_VAR_acr_name: ${{ secrets.AZURE_ACR_NAME }}
+        run: |
+          cd terraform/shared
+          terraform init \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=shared.tfstate" \
+            -backend-config="access_key=$TF_STATE_SA_ACCESS_KEY"
+
+          # Idempotent import: If acrewastescalable already exists in rg-ewastescalable-shared, adopt it into state
+          ACR_ID=$(az acr show --name "${TF_VAR_acr_name:-acrewastescalable}" --resource-group "rg-ewastescalable-shared" --query id -o tsv 2>/dev/null || true)
+          if [ -n "$ACR_ID" ]; then
+            if ! terraform state show azurerm_container_registry.acr &>/dev/null; then
+              echo "[import] Adopting existing ACR $ACR_ID into Terraform state..."
+              terraform import -var="acr_name=${TF_VAR_acr_name:-acrewastescalable}" azurerm_container_registry.acr "$ACR_ID" || true
+            fi
+          fi
+
+          if [ "$TERRAFORM_ACTION" == "plan" ]; then
+            terraform plan
+          else
+            terraform apply -auto-approve
+          fi
+
+      # ------------------------------------------------------------------------
+      # 1.2 ENVIRONMENT INFRASTRUCTURE (VNet, DB, Redis, Key Vault, Event Hubs, ACA)
+      # ------------------------------------------------------------------------
+      - name: Apply Target Environment Infrastructure
+        env:
+          TF_VAR_matcher_signing_secret: ${{ secrets.MATCHER_SIGNING_SECRET }}
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+          TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
+          TF_STATE_SA_ACCESS_KEY: ${{ secrets.TF_STATE_SA_ACCESS_KEY }}
+          TERRAFORM_ACTION: ${{ inputs.action }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          MYSQL_DB_ADMIN_PASSWORD: ${{ secrets.MYSQL_DB_ADMIN_PASSWORD }}
+          AUTH_ACCESS: ${{ secrets.EWASTE_AUTH_ACCESS_SECRET }}
+          AUTH_REFRESH: ${{ secrets.EWASTE_AUTH_REFRESH_SECRET }}
+          AUTH_HASH: ${{ secrets.EWASTE_AUTH_REFRESH_HASH_SECRET }}
+          ANALYTICS_TOKEN: ${{ secrets.EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN || secrets.ANALYTICS_SERVICE_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
+        run: |
+          if [ "${#TF_VAR_matcher_signing_secret}" -lt 32 ]; then
+            echo "::error::MATCHER_SIGNING_SECRET must contain at least 32 characters for this environment."
+            exit 1
+          fi
+          if [ "${#ANALYTICS_TOKEN}" -lt 32 ]; then
+            echo "::error::Set EWASTE_AUTH_ANALYTICS_SERVICE_TOKEN (or legacy ANALYTICS_SERVICE_TOKEN) with at least 32 characters."
+            exit 1
+          fi
+          cd terraform/environments
+          terraform init \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=$TARGET_ENV.tfstate" \
+            -backend-config="access_key=$TF_STATE_SA_ACCESS_KEY"
+
+          TF_VARS_FILE="environments/$TARGET_ENV.tfvars"
+          if [ ! -f "$TF_VARS_FILE" ]; then
+            TF_VARS_FILE="environments/dev.tfvars"
+          fi
+
+          if [ "$TARGET_ENV" != "dev" ]; then
+            if [ -z "$AUTH_ACCESS" ] || [ -z "$AUTH_REFRESH" ] || [ -z "$AUTH_HASH" ]; then
+              echo "::error::Missing required JWT authentication secrets for environment '$TARGET_ENV'. EWASTE_AUTH_ACCESS_SECRET, EWASTE_AUTH_REFRESH_SECRET, and EWASTE_AUTH_REFRESH_HASH_SECRET must be configured in GitHub Secrets."
+              exit 1
+            fi
+            if [ "$AUTH_ACCESS" == "default-dev-access-secret-minimum-32-chars-long" ] || \
+               [ "$AUTH_REFRESH" == "default-dev-refresh-secret-minimum-32-chars-long" ] || \
+               [ "$AUTH_HASH" == "default-dev-refresh-hash-secret-32-chars" ]; then
+              echo "::error::Insecure default JWT secrets detected for environment '$TARGET_ENV'. Staging and production require non-default, dedicated secrets."
+              exit 1
+            fi
+          else
+            # Local dev environment fallback only
+            AUTH_ACCESS="${AUTH_ACCESS:-default-dev-access-secret-minimum-32-chars-long}"
+            AUTH_REFRESH="${AUTH_REFRESH:-default-dev-refresh-secret-minimum-32-chars-long}"
+            AUTH_HASH="${AUTH_HASH:-default-dev-refresh-hash-secret-32-chars}"
+          fi
+
+          TENANT_ID_VAL="${AZURE_TENANT_ID:-$ARM_TENANT_ID}"
+          ACR_NAME_VAL="${{ secrets.AZURE_ACR_NAME }}"
+
+          TF_VAR_ARGS=(
+            -var-file="$TF_VARS_FILE"
+            -var="environment=$TARGET_ENV"
+            -var="tenant_id=$TENANT_ID_VAL"
+            -var="shared_acr_name=$ACR_NAME_VAL"
+            -var="db_admin_password=$MYSQL_DB_ADMIN_PASSWORD"
+            -var="auth_access_secret=$AUTH_ACCESS"
+            -var="auth_refresh_secret=$AUTH_REFRESH"
+            -var="auth_refresh_hash_secret=$AUTH_HASH"
+            -var="github_repository=$GITHUB_REPOSITORY"
+          )
+
+          if [ -n "$GH_RUNNER_PAT" ]; then
+            TF_VAR_ARGS+=(-var="github_pat=$GH_RUNNER_PAT")
+          fi
+
+          if [ -n "$ANALYTICS_TOKEN" ]; then
+            TF_VAR_ARGS+=(-var="analytics_service_token=$ANALYTICS_TOKEN")
+          fi
+
+          # ----------------------------------------------------------------
+          # Idempotent import: adopt Container Apps that exist in Azure but
+          # are missing from Terraform state (one-time migration from the
+          # old CLI-based CD provisioning model).
+          # ----------------------------------------------------------------
+          RG="rg-ewastescalable-${TARGET_ENV}"
+          for APP_SUFFIX in api ui analytics; do
+            RESOURCE_ADDR="azurerm_container_app.${APP_SUFFIX}"
+            APP_NAME="aca-ewastescalable-${TARGET_ENV}-${APP_SUFFIX}"
+            if [ "$APP_SUFFIX" == "analytics" ]; then
+              APP_NAME="aca-ewastescalable-${TARGET_ENV}-analytic"
+            fi
+
+            if terraform state show "$RESOURCE_ADDR" &>/dev/null; then
+              echo "[import] $RESOURCE_ADDR already in state — skipping."
+              continue
+            fi
+
+            APP_ID=$(az containerapp show \
+              --name "$APP_NAME" \
+              --resource-group "$RG" \
+              --query id -o tsv 2>/dev/null || true)
+
+            if [ -n "$APP_ID" ]; then
+              # Azure CLI returns '/containerapps/' (lowercase), but Terraform
+              # AzureRM provider strictly requires '/containerApps/' with capital 'A'.
+              APP_ID=$(echo "$APP_ID" | sed -e 's|/providers/microsoft.app/|/providers/Microsoft.App/|I' -e 's|/containerapps/|/containerApps/|I')
+              echo "[import] Importing $APP_NAME into $RESOURCE_ADDR ($APP_ID)..."
+              terraform import "${TF_VAR_ARGS[@]}" "$RESOURCE_ADDR" "$APP_ID"
+            else
+              echo "[import] $APP_NAME does not exist in Azure — nothing to import."
+            fi
+          done
+
+          # ----------------------------------------------------------------
+          # Idempotent import: adopt Storage Account and container that exist
+          # in Azure but are missing from Terraform state.
+          # ----------------------------------------------------------------
+          SA_NAME="stgewastescalable${TARGET_ENV}"
+          SA_ADDR="azurerm_storage_account.evidence"
+          if terraform state show "$SA_ADDR" &>/dev/null; then
+            echo "[import] $SA_ADDR already in state — skipping."
+          else
+            SA_ID=$(az storage account show \
+              --name "$SA_NAME" \
+              --resource-group "$RG" \
+              --query id -o tsv 2>/dev/null || true)
+
+            if [ -n "$SA_ID" ]; then
+              echo "[import] Importing $SA_NAME into $SA_ADDR ($SA_ID)..."
+              terraform import "${TF_VAR_ARGS[@]}" "$SA_ADDR" "$SA_ID"
+            else
+              echo "[import] $SA_NAME does not exist in Azure — will be created."
+            fi
+          fi
+
+          CONTAINER_ADDR="azapi_resource.evidence_private"
+          if terraform state show "$CONTAINER_ADDR" &>/dev/null; then
+            echo "[import] $CONTAINER_ADDR already in state — skipping."
+          else
+            SA_ID_FOR_CONTAINER=$(az storage account show \
+              --name "$SA_NAME" \
+              --resource-group "$RG" \
+              --query id -o tsv 2>/dev/null || true)
+            if [ -n "$SA_ID_FOR_CONTAINER" ]; then
+              CONTAINER_ID="${SA_ID_FOR_CONTAINER}/blobServices/default/containers/evidence-private"
+              CONTAINER_EXISTS=$(az rest --method get --uri "https://management.azure.com${CONTAINER_ID}?api-version=2023-01-01" --query id -o tsv 2>/dev/null || true)
+              if [ -n "$CONTAINER_EXISTS" ]; then
+                echo "[import] Importing evidence-private into $CONTAINER_ADDR ($CONTAINER_ID)..."
+                terraform import "${TF_VAR_ARGS[@]}" "$CONTAINER_ADDR" "$CONTAINER_ID"
+              else
+                echo "[import] Container evidence-private does not exist in Azure — will be created."
+              fi
+            fi
+          fi
+
+          # ----------------------------------------------------------------
+          # Auto-heal: If ACR Private Endpoint is in Disconnected state,
+          # taint it so Terraform cleanly replaces and re-establishes it.
+          # ----------------------------------------------------------------
+          PE_STATUS=$(az network private-endpoint show \
+            --name "pe-acr-ewastescalable-${TARGET_ENV}" \
+            --resource-group "rg-ewastescalable-${TARGET_ENV}" \
+            --query "privateLinkServiceConnections[0].privateLinkServiceConnectionState.status" -o tsv 2>/dev/null || true)
+
+          if [ "$PE_STATUS" == "Disconnected" ]; then
+            echo "::warning::Detected Disconnected ACR Private Endpoint. Tainting for clean recreation..."
+            terraform taint azurerm_private_endpoint.acr || true
+          fi
+          if [ "$TERRAFORM_ACTION" == "plan" ]; then
+            terraform plan "${TF_VAR_ARGS[@]}"
+          else
+            terraform apply -auto-approve "${TF_VAR_ARGS[@]}"
+          fi
+
+      - name: Verify Evidence Storage Connectivity
+        if: inputs.action != 'plan'
+        run: |
+          chmod +x scripts/verify-evidence-storage.sh
+          ./scripts/verify-evidence-storage.sh "${{ needs.resolve-environment.outputs.environment }}"
+
+      - name: Verify Single Public Entry & Path Routing
+        if: inputs.action != 'plan'
+        run: |
+          chmod +x scripts/test-single-entry-routing.sh
+          ./scripts/test-single-entry-routing.sh "${{ needs.resolve-environment.outputs.environment }}"
+
+      # ------------------------------------------------------------------------
+      # 1.3 EXPORT OUTPUTS
+      # ------------------------------------------------------------------------
+      - name: Export Infrastructure Outputs
+        id: tf_outputs
+        env:
+          TARGET_ENV: ${{ needs.resolve-environment.outputs.environment }}
+          MYSQL_DB_ADMIN_PASSWORD: ${{ secrets.MYSQL_DB_ADMIN_PASSWORD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+        run: |
+          cd terraform/environments
+
+          ACR_NAME_VAL="${{ secrets.AZURE_ACR_NAME }}"
+          ACR_SERVER=$(terraform output -raw acr_login_server 2>/dev/null || echo "${ACR_NAME_VAL}.azurecr.io")
+          MYSQL_FQDN=$(terraform output -raw mysql_fqdn 2>/dev/null || echo "mysql-ewastescalable-${TARGET_ENV}.mysql.database.azure.com")
+          MYSQL_DB=$(terraform output -raw mysql_database_name 2>/dev/null || echo "ewastescalabledb")
+          MYSQL_USER=$(terraform output -raw mysql_admin_username 2>/dev/null || echo "ewasteadmin")
+          KV_URI=$(terraform output -raw key_vault_uri 2>/dev/null || echo "")
+          MYSQL_PASS="$MYSQL_DB_ADMIN_PASSWORD"
+          if [ -z "$MYSQL_PASS" ]; then
+            MYSQL_PASS=$(terraform output -raw mysql_admin_password 2>/dev/null || echo "")
+          fi
+          ACA_IDENTITY_ID=$(terraform output -raw aca_identity_id 2>/dev/null || echo "")
+          REDIS_ADDR="redis-ewastescalable-${TARGET_ENV}.redis.cache.windows.net:6380"
+          REDIS_PASS="$REDIS_PASSWORD"
+          if [ -z "$REDIS_PASS" ]; then
+            REDIS_PASS=$(terraform output -raw redis_primary_access_key 2>/dev/null || echo "")
+          fi
+          ACA_API_FQDN=$(terraform output -raw aca_api_fqdn 2>/dev/null || echo "")
+          ACA_UI_FQDN=$(terraform output -raw aca_ui_fqdn 2>/dev/null || echo "")
+          ACA_ANALYTICS_FQDN=$(terraform output -raw aca_analytics_fqdn 2>/dev/null || echo "")
+          STORAGE_ACCOUNT_NAME=$(terraform output -raw storage_account_name 2>/dev/null || echo "stgewastescalable${TARGET_ENV}")
+          STORAGE_BLOB_ENDPOINT=$(terraform output -raw storage_blob_endpoint 2>/dev/null || echo "https://stgewastescalable${TARGET_ENV}.blob.core.windows.net/")
+
+          if [ -n "$MYSQL_PASS" ]; then
+            echo "::add-mask::$MYSQL_PASS"
+          fi
+          if [ -n "$REDIS_PASS" ]; then
+            echo "::add-mask::$REDIS_PASS"
+          fi
+
+          {
+            echo "acr_server=${ACR_SERVER}"
+            echo "aca_env_name=cae-ewastescalable-${TARGET_ENV}"
+            echo "resource_group=rg-ewastescalable-${TARGET_ENV}"
+            echo "mysql_fqdn=${MYSQL_FQDN}"
+            echo "mysql_db=${MYSQL_DB}"
+            echo "mysql_admin_username=${MYSQL_USER}"
+            echo "key_vault_uri=${KV_URI}"
+            echo "mysql_admin_password=${MYSQL_PASS}"
+            echo "redis_address=${REDIS_ADDR}"
+            echo "redis_password=${REDIS_PASS}"
+            echo "aca_identity_id=${ACA_IDENTITY_ID}"
+            echo "aca_api_fqdn=${ACA_API_FQDN}"
+            echo "aca_ui_fqdn=${ACA_UI_FQDN}"
+            echo "aca_analytics_fqdn=${ACA_ANALYTICS_FQDN}"
+            echo "storage_account_name=${STORAGE_ACCOUNT_NAME}"
+            echo "storage_blob_endpoint=${STORAGE_BLOB_ENDPOINT}"
+          } >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------------------------
+      # 1.4 EXPORT TARGET ENVIRONMENT ARTIFACT FOR DOWNSTREAM WORKFLOWS
+      # ------------------------------------------------------------------------
+      - name: Save Deployment Target Environment
+        run: |
+          mkdir -p .environment
+          echo "${{ needs.resolve-environment.outputs.environment }}" > .environment/target_env
+
+      - name: Upload Target Environment Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-environment
+          path: .environment/target_env
+          retention-days: 1

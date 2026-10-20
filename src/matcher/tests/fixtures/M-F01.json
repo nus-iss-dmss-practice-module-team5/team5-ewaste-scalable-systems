@@ -1,0 +1,179 @@
+{
+  "fixture_schema_version": 1,
+  "fixture_id": "M-F01",
+  "rule_set_version": "binary-v1",
+  "purpose": "Original M-F01 baseline: only PROC-001; exact 100.00 kg capacity and exact feasible arrival at the deadline both pass.",
+  "input": {
+    "contract_version": 1,
+    "run_id": "c0000000-0000-4000-8000-000000000011",
+    "decision_id": "d0000000-0000-4000-8000-000000000011",
+    "context_generation": 1,
+    "trigger_id": "e0000000-0000-4000-8000-000000000001",
+    "trigger_type": "REQUEST_SUBMITTED",
+    "evaluation_at": "2026-09-16T00:00:00.000000Z",
+    "correlation_id": "fixture-m-f01",
+    "batch": {
+      "batch_id": "b0000000-0000-4000-8000-000000000001",
+      "organization_id": "DON-001",
+      "batch_version": 2,
+      "claim_epoch": "1",
+      "status": "SUBMITTED",
+      "submitted_at": "2026-09-15T00:00:00.000000Z",
+      "category": "ICT_EQUIPMENT",
+      "quantity": 10,
+      "estimated_weight_kg": "100.00",
+      "condition_rating": "REPAIRABLE",
+      "is_data_bearing": true,
+      "zone": "NORTH",
+      "collection_deadline": "2026-09-18T00:00:00.000000Z"
+    },
+    "rule_set": {
+      "rule_set_id": "a0000000-0000-4000-8000-000000000010",
+      "rule_set_version": "binary-v1",
+      "rules_json": {
+        "categories": [
+          "ICT_EQUIPMENT",
+          "LARGE_APPLIANCE",
+          "BATTERIES",
+          "CONSUMER_ELECTRONICS"
+        ],
+        "conditions": [
+          "FUNCTIONAL",
+          "REPAIRABLE",
+          "END_OF_LIFE"
+        ],
+        "zones": [
+          "NORTH",
+          "SOUTH",
+          "EAST",
+          "WEST",
+          "CENTRAL"
+        ],
+        "weight_scale": 2,
+        "rule_ids": [
+          "M1",
+          "M2",
+          "M3",
+          "M4",
+          "M5"
+        ],
+        "predicates": {
+          "M1": "ACTIVE_EXACT_CATEGORY",
+          "M2": "ACTIVE_CAPABILITY_AND_PROFILE_CONDITION_AND_DATA",
+          "M3": "OWNED_ACTIVE_POOL_FULL_WEIGHT",
+          "M4": "ACTIVE_EXACT_ZONE",
+          "M5": "EVALUATION_BEFORE_DEADLINE_AND_LEAD_ARRIVAL_AT_OR_BEFORE_DEADLINE"
+        },
+        "failure_precedence": [
+          "M1",
+          "M2",
+          "M3",
+          "M4",
+          "M5"
+        ],
+        "ranking": false
+      }
+    },
+    "organisations": [
+      {
+        "recycler_org_id": "PROC-001",
+        "organisation_type": "PROCESSING_FACILITY",
+        "organisation_status": "ACTIVE",
+        "profile": {
+          "is_active": true,
+          "version": "1"
+        },
+        "category_capabilities": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "category": "ICT_EQUIPMENT",
+            "accepted_conditions": [
+              "REPAIRABLE"
+            ],
+            "supports_data_bearing": true,
+            "is_active": true,
+            "capacity_pool_id": "f0000000-0000-4000-8000-000000000001",
+            "version": "1"
+          }
+        ],
+        "capacity_pools": [
+          {
+            "id": "f0000000-0000-4000-8000-000000000001",
+            "pool_code": "MAIN",
+            "total_kg": "100.00",
+            "reserved_kg": "0.00",
+            "is_active": true,
+            "version": "1"
+          }
+        ],
+        "service_zones": [
+          {
+            "id": "d0000000-0000-4000-8000-000000000001",
+            "zone": "NORTH",
+            "minimum_lead_minutes": 2880,
+            "is_active": true,
+            "version": "1"
+          }
+        ]
+      }
+    ],
+    "profile_snapshot_hash": "957ddbf2865e2c9bb704dc414e691fca53205f8ccd213eb8f18d68e40f065b89",
+    "input_hash": "737c2eae1c5461e70510b18ddec04596811005fcc1e94bf78b5e94b103676811"
+  },
+  "expected_output": {
+    "contract_version": 1,
+    "run_id": "c0000000-0000-4000-8000-000000000011",
+    "decision_id": "d0000000-0000-4000-8000-000000000011",
+    "context_generation": 1,
+    "input_hash": "737c2eae1c5461e70510b18ddec04596811005fcc1e94bf78b5e94b103676811",
+    "profile_snapshot_hash": "957ddbf2865e2c9bb704dc414e691fca53205f8ccd213eb8f18d68e40f065b89",
+    "evaluation_at": "2026-09-16T00:00:00.000000Z",
+    "batch_id": "b0000000-0000-4000-8000-000000000001",
+    "batch_version": 2,
+    "claim_epoch": "1",
+    "rule_set_id": "a0000000-0000-4000-8000-000000000010",
+    "candidates": [
+      {
+        "recycler_org_id": "PROC-001",
+        "profile_version": "1",
+        "category_match": true,
+        "capability_match": true,
+        "capacity_available": true,
+        "zone_match": true,
+        "deadline_viable": true,
+        "is_matched": true,
+        "available_capacity_kg": "100.00",
+        "capacity_pool_id": "f0000000-0000-4000-8000-000000000001",
+        "capacity_version": "1",
+        "minimum_lead_minutes": 2880,
+        "feasible_at": "2026-09-18T00:00:00.000000Z",
+        "reason_code": "ELIGIBLE",
+        "failed_rules_json": [],
+        "evidence_json": {
+          "capability_id": "a0000000-0000-4000-8000-000000000001",
+          "capability_version": "1",
+          "service_zone_id": "d0000000-0000-4000-8000-000000000001",
+          "service_zone_version": "1",
+          "missing_configuration": []
+        }
+      }
+    ],
+    "outcome": "MATCHED",
+    "primary_reason": "ELIGIBLE_EXISTS",
+    "evaluated_count": 1,
+    "eligible_count": 1
+  },
+  "expected_persistence": {
+    "matching_decisions_inserted": 1,
+    "matched_results_inserted": 1,
+    "batch_status": "MATCHED",
+    "batch_version": 3,
+    "claim_epoch": "1",
+    "current_claim_id": null,
+    "current_assignment_id": null,
+    "capacity_reserved_kg_unchanged": true,
+    "audit_rows_inserted": 1,
+    "outbox_rows_inserted": 1,
+    "command_state": "COMPLETED"
+  }
+}
