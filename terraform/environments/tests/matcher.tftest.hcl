@@ -52,7 +52,7 @@ run "matcher_configuration_survives_iac" {
         EWASTE_MATCHING_ENABLED  = "true"
         EWASTE_MATCHING_ISSUER   = "ewaste-matching-dev"
         EWASTE_MATCHING_AUDIENCE = "ewaste-matching-api-dev"
-        EWASTE_KAFKA_BATCH_SIZE  = "1"
+        EWASTE_KAFKA_BATCH_SIZE  = "50"
       } : one([for e in azurerm_container_app.api.template[0].container[0].env : e.value if e.name == key]) == value
     ])
     error_message = "IaC must keep the matching facade enabled and preserve CD's issuer, audience and publisher settings."

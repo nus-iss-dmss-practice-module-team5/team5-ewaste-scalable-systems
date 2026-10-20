@@ -880,7 +880,7 @@ resource "azurerm_container_app" "api" {
 
       env {
         name  = "EWASTE_KAFKA_BATCH_SIZE"
-        value = "1"
+        value = "50"
       }
 
       env {

@@ -116,6 +116,7 @@ variable "batch_max_replicas" {
   description = "Maximum replicas for batch-workflow-svc (lock to 1 for R1 capacity screen)."
 }
 
+
 variable "auth_access_secret" {
   type        = string
   sensitive   = true

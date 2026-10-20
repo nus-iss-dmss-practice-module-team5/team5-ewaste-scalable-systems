@@ -123,3 +123,7 @@ zap-reports/
 # Local Azure files / credentials
 # =========================================================
 .azure/
+
+# =========================================================
+# Design analysis working documents
+docs/design-analysis/

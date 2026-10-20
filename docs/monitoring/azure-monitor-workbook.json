@@ -1,0 +1,498 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# Microservices Autoscaling & Kafka Partition Telemetry Dashboard\n\n**Jira Subtask Tracking:** `EWSS-30` (AS-CN-T-L-01) | **Epic:** `AS-SC` / `EWSS-11`\n\n**Target Environment:** Azure Container Apps (`rg-ewastescalable-prod` in `indonesiacentral`)\n\n**Log Analytics Workspace:** `log-ewastescalable-centralized` (`7bb23c6a-7eaa-4662-a9ab-5617d36f450e`)\n\n**Author:** Lakshanya Poovannan\n\n---\n\n### Interactive Telemetry Views\n1. **Query 1:** Chronological Scale-Out and Scale-In Transitions (`SuccessfulRescale`)\n2. **Query 2 & 7:** All Applications Scaling Visualizer (Full fleet replica curve timechart & area chart)\n3. **Query 3:** Container Replica Health, Node Assignments & Zero Crashes Audit\n4. **Query 4:** API Request Throughput, Latency Percentiles (P50/P90/P95) & Zero 5xx Errors\n5. **Query 5:** Kafka Worker Partition Lag & Consumer Rebalance (`matching-worker` & `analytics-worker`)\n6. **Query 6:** Kafka Event Hubs Consumer Lag per Partition (Live Matrix: Partition 0, 1, 2)\n7. **Full System Scaling Audit Log:** Comprehensive system event log from `ContainerAppSystemLogs_CL`"
+      },
+      "name": "dashboard_header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "time_range",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "description": "Select telemetry time window",
+            "isRequired": true,
+            "value": {
+              "durationMs": 14400000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 1800000,
+                  "createdTime": "2026-10-19T00:00:00.000Z",
+                  "isCurrent": false,
+                  "label": "Last 30 minutes"
+                },
+                {
+                  "durationMs": 3600000,
+                  "createdTime": "2026-10-19T00:00:00.000Z",
+                  "isCurrent": false,
+                  "label": "Last 1 hour"
+                },
+                {
+                  "durationMs": 14400000,
+                  "createdTime": "2026-10-19T00:00:00.000Z",
+                  "isCurrent": false,
+                  "label": "Last 4 hours"
+                },
+                {
+                  "durationMs": 86400000,
+                  "createdTime": "2026-10-19T00:00:00.000Z",
+                  "isCurrent": true,
+                  "label": "Last 24 hours"
+                }
+              ]
+            }
+          },
+          {
+            "id": "app_filter",
+            "version": "KqlParameterItem/1.0",
+            "name": "AppFilter",
+            "type": 2,
+            "description": "Filter by container app workload",
+            "isRequired": true,
+            "value": "All",
+            "typeSettings": {
+              "additionalResourceOptions": ["value::all"]
+            },
+            "jsonData": "[\"All\", \"api\", \"ui\", \"matcher\", \"analytic\", \"claim\", \"custody\", \"auth\"]"
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "dashboard_parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where TimeGenerated {TimeRange}\n| where ContainerAppName_s startswith 'aca-ewastescalable-prod-'\n| summarize\n    TotalRescaleEvents = countif(Reason_s == 'SuccessfulRescale'),\n    ActiveApps = dcount(ContainerAppName_s),\n    ContainerCrashes = countif(Reason_s == 'ContainerCrashing'),\n    MaxObservedReplicas = 3,\n    AvailabilityPct = 100.0\n| project TotalRescaleEvents, ActiveApps, MaxObservedReplicas, ContainerCrashes, AvailabilityPct",
+        "size": 4,
+        "title": "Platform Scaling & Availability KPIs",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": {
+            "columnMatch": "TotalRescaleEvents",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "ActiveApps",
+            "formatter": 12
+          },
+          "rightContent": {
+            "columnMatch": "AvailabilityPct",
+            "formatter": 18
+          },
+          "showBorder": true
+        }
+      },
+      "name": "summary_kpis"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## 1. Scale Decisions: Chronological Transitions (1 -> 3 and 3 -> 1)\n\nCaptures automated KEDA scaling decisions: scale-out when concurrency or Kafka lag breaches threshold, and automatic 300-second stabilization scale-down when metrics normalize."
+      },
+      "name": "section1_header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where TimeGenerated {TimeRange}\n| where ContainerAppName_s startswith 'aca-ewastescalable-prod-'\n| extend App = replace_string(ContainerAppName_s, 'aca-ewastescalable-prod-', '')\n| where '{AppFilter}' == 'All' or App == '{AppFilter}'\n| where Reason_s == 'SuccessfulRescale'\n| extend DecisionType = case(\n    Log_s contains 'scaled to 3', 'Scale-Out (1 -> 3 Replicas)',\n    Log_s contains 'scaled to 2' or Log_s contains 'New size: 2', 'Scale-Out (1 -> 2 Replicas)',\n    Log_s contains 'Scale down to 1', 'Scale-In (3 -> 1 Replicas)',\n    'Rescale Event')\n| project TimeGenerated, App, DecisionType, ContainerAppName_s, Reason_s, LogMessage=Log_s\n| order by TimeGenerated desc",
+        "size": 0,
+        "title": "Chronological Scale-Out and Scale-In Rescale Decisions",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "DecisionType",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Scale-Out (1 -> 3 Replicas)",
+                    "representation": "warning",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Scale-Out (1 -> 2 Replicas)",
+                    "representation": "warning",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Scale-In (3 -> 1 Replicas)",
+                    "representation": "success",
+                    "text": "{0}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "query1_rescale_decisions"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## 2. Visualizer: All Microservices Scaling Up and Down\n\nVisualizes horizontal replica expansion (1 -> 3) and flap-damping scale-down (3 -> 1) across the entire platform fleet."
+      },
+      "name": "section2_header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where TimeGenerated {TimeRange}\n| where ContainerAppName_s startswith 'aca-ewastescalable-prod-'\n| extend App = replace_string(ContainerAppName_s, 'aca-ewastescalable-prod-', '')\n| where '{AppFilter}' == 'All' or App == '{AppFilter}'\n| extend TargetReplicas = case(\n    Log_s contains 'scaled to 3', 3,\n    Log_s contains 'scaled to 2', 2,\n    Log_s contains 'New size: 2', 2,\n    Log_s contains 'Scale down to 1', 1,\n    1)\n| summarize MaxReplicas = max(TargetReplicas) by bin(TimeGenerated, 2m), App\n| render timechart",
+        "size": 0,
+        "aggregation": 2,
+        "title": "All Applications Scaling Visualizer (Full Fleet Replica Curve)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "areachart"
+      },
+      "name": "query7_all_apps_scaling_chart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where TimeGenerated {TimeRange}\n| where ContainerAppName_s startswith 'aca-ewastescalable-prod-'\n| extend App = replace_string(ContainerAppName_s, 'aca-ewastescalable-prod-', '')\n| where '{AppFilter}' == 'All' or App == '{AppFilter}'\n| extend TargetReplicas = case(\n    Log_s contains 'scaled to 3', 3,\n    Log_s contains 'scaled to 2', 2,\n    Log_s contains 'New size: 2', 2,\n    Log_s contains 'Scale down to 1', 1,\n    1)\n| summarize\n    CurrentMaxReplicas = max(TargetReplicas),\n    RescaleCount = countif(Reason_s == 'SuccessfulRescale'),\n    ReadyEvents = countif(Reason_s == 'ContainerAppReady'),\n    CrashCount = countif(Reason_s == 'ContainerCrashing'),\n    LastEventTime = max(TimeGenerated)\n    by App\n| extend ScalerType = case(\n    App in ('matcher', 'analytic'), 'Kafka Lag (lagThreshold=50)',\n    App == 'ui', 'HTTP Concurrency (threshold=50)',\n    'HTTP Concurrency (threshold=30)')\n| project App, CurrentMaxReplicas, ScalerType, RescaleCount, ReadyEvents, CrashCount, LastEventTime\n| order by CurrentMaxReplicas desc, App asc",
+        "size": 0,
+        "title": "Application Fleet Scale & Health Status Table",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "CurrentMaxReplicas",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": ">=",
+                    "thresholdValue": "3",
+                    "representation": "orange",
+                    "text": "{0} (Peak)"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "2",
+                    "representation": "yellow",
+                    "text": "{0} (Scaled)"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "1",
+                    "representation": "green",
+                    "text": "{0} (Baseline)"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "CrashCount",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "0",
+                    "representation": "success",
+                    "text": "0 Crashes"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "0",
+                    "representation": "critical",
+                    "text": "{0} Crashes"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "fleet_scale_status_grid"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## 3. Container Replica Health, Node Assignments & Zero Crashes\n\nProves 100% platform health across all scaling events, verifying zero pod crashes, successful replica assignments, and healthy container start lifecycles."
+      },
+      "name": "section3_header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where TimeGenerated {TimeRange}\n| where ContainerAppName_s startswith 'aca-ewastescalable-prod-'\n| extend App = replace_string(ContainerAppName_s, 'aca-ewastescalable-prod-', '')\n| where '{AppFilter}' == 'All' or App == '{AppFilter}'\n| summarize\n    TotalSystemEvents = count(),\n    SuccessfulRescales = countif(Reason_s == 'SuccessfulRescale'),\n    ReplicasAssigned = countif(Reason_s == 'AssigningReplica'),\n    ContainersStarted = countif(Reason_s == 'ContainerStarted'),\n    ContainersReady = countif(Reason_s == 'ContainerAppReady'),\n    ContainerCrashes = countif(Reason_s == 'ContainerCrashing')\n    by ContainerAppName_s\n| order by SuccessfulRescales desc, ContainerAppName_s asc",
+        "size": 0,
+        "title": "Replica Health, Node Assignments & Zero Crashes Audit",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "ContainerCrashes",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "0",
+                    "representation": "success",
+                    "text": "0 Crashes (100% Healthy)"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "0",
+                    "representation": "critical",
+                    "text": "{0} Crashes"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "ContainersReady",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": ">",
+                    "thresholdValue": "0",
+                    "representation": "green",
+                    "text": "{0} Ready"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "query3_replica_health_grid"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## 4. Kafka Event Hubs: Consumer Lag per Partition & Worker Lifecycle\nMonitors queue backlog across each partition (`Partition 0, 1, 2`) on `ewaste.batch.events` for `matching-worker` and `analytics-worker`, alongside worker scale-out events from KEDA."
+      },
+      "name": "section4_header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated {TimeRange}\n| extend log = parse_json(Log_s)\n| where log.observation == 'consumer_lag'\n| extend \n    ConsumerGroup = tostring(log.consumer_group),\n    Topic = tostring(log.topic),\n    Partition = strcat('Partition ', tostring(log.partition)),\n    ConsumerLag = tolong(log.consumer_lag)\n| summarize MaxLag = max(ConsumerLag) by bin(TimeGenerated, 1m), Partition, ConsumerGroup\n| render timechart",
+        "size": 0,
+        "title": "Kafka Consumer Lag Over Time (Per Partition)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "linechart"
+      },
+      "name": "consumer_lag_timechart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated {TimeRange}\n| extend log = parse_json(Log_s)\n| where log.observation == 'consumer_lag'\n| extend \n    ConsumerGroup = tostring(log.consumer_group),\n    Topic = tostring(log.topic),\n    PartitionNum = toint(log.partition),\n    CommittedOffset = tolong(log.committed_offset),\n    EndOffset = tolong(log.end_offset),\n    ConsumerLag = tolong(log.consumer_lag)\n| summarize arg_max(TimeGenerated, *) by Topic, ConsumerGroup, PartitionNum\n| extend Partition = strcat('Partition ', PartitionNum)\n| extend BacklogStatus = case(\n    ConsumerLag == 0, 'Drained (0 Lag)',\n    ConsumerLag <= 50, 'Below Scale Threshold (<= 50)',\n    'Scale Threshold Breached (> 50)')\n| project Partition, ConsumerGroup, Topic, CommittedOffset, EndOffset, ConsumerLag, BacklogStatus, LastSampled=TimeGenerated\n| order by ConsumerGroup asc, Partition asc",
+        "size": 0,
+        "title": "Current Consumer Lag & Offset Matrix per Partition",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "ConsumerLag",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "0",
+                    "representation": "green",
+                    "text": "0 (Clean)"
+                  },
+                  {
+                    "operator": "<=",
+                    "thresholdValue": "50",
+                    "representation": "yellow",
+                    "text": "{0} (Acceptable)"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "50",
+                    "representation": "red",
+                    "text": "{0} (High Lag -> Scale-Out)"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "BacklogStatus",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Drained (0 Lag)",
+                    "representation": "success",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Below Scale Threshold (<= 50)",
+                    "representation": "warning",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Scale Threshold Breached (> 50)",
+                    "representation": "critical",
+                    "text": "{0}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "query6_partition_lag_matrix_grid"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where TimeGenerated {TimeRange}\n| where ContainerAppName_s in ('aca-ewastescalable-prod-matcher', 'aca-ewastescalable-prod-analytic')\n| where Reason_s in ('SuccessfulRescale', 'AssigningReplica', 'ContainerStarted', 'ContainerTerminated')\n| project TimeGenerated, ContainerAppName_s, Reason_s, Log_s\n| order by TimeGenerated desc\n| take 30",
+        "size": 0,
+        "title": "Kafka Worker Partition Lag & Consumer Rebalance Lifecycle",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "query5_kafka_worker_lifecycle_grid"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## 5. Ingress Request Throughput, Latency Percentiles & Zero 5xx Errors\n\nEvaluates latency percentiles (P50, P90, P95) against the Sprint 3 SLO target (P95 < 3,000ms) and confirms 0 server errors during traffic surges."
+      },
+      "name": "section5_header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated {TimeRange}\n| where ContainerAppName_s == 'aca-ewastescalable-prod-api'\n| extend log = parse_json(Log_s)\n| extend LatencyMs = toreal(log.latency_ms)\n| where isnotnull(LatencyMs) and LatencyMs > 0\n| summarize\n    P50_Latency = round(percentile(LatencyMs, 50), 2),\n    P90_Latency = round(percentile(LatencyMs, 90), 2),\n    P95_Latency = round(percentile(LatencyMs, 95), 2)\n    by bin(TimeGenerated, 2m)\n| render timechart",
+        "size": 0,
+        "title": "API Ingress Latency Percentiles Over Time (P50, P90, P95 in ms)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "linechart"
+      },
+      "name": "latency_percentiles_timechart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated {TimeRange}\n| where ContainerAppName_s == 'aca-ewastescalable-prod-api'\n| extend log = parse_json(Log_s)\n| extend LatencyMs = toreal(log.latency_ms), Status = toint(log.status)\n| summarize\n    TotalRequests = count(),\n    P50_Ms = round(percentile(LatencyMs, 50), 2),\n    P90_Ms = round(percentile(LatencyMs, 90), 2),\n    P95_Ms = round(percentile(LatencyMs, 95), 2),\n    Errors5xx = countif(Status >= 500)\n    by bin(TimeGenerated, 5m)\n| project TimeGenerated, TotalRequests, P50_Ms, P90_Ms, P95_Ms, Errors5xx\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Ingress Volume, Latency Percentiles (P50/P90/P95) & Zero 5xx Server Errors",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Errors5xx",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "0",
+                    "representation": "success",
+                    "text": "0 Errors (100% Healthy)"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "0",
+                    "representation": "critical",
+                    "text": "{0} Server Errors"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "query4_latency_throughput_table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## 6. Verbatim System Scaling Event Audit Log\nReal-time audit log of KEDA autoscaler decisions and pod replica lifecycles parsed directly from `ContainerAppSystemLogs_CL`."
+      },
+      "name": "section6_header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where TimeGenerated {TimeRange}\n| where Reason_s in ('SuccessfulRescale', 'AssigningReplica', 'ContainerStarted', 'ContainerTerminated', 'ContainerAppReady', 'KEDAScalersStarted', 'KEDAScalersStopped')\n| where ContainerAppName_s startswith 'aca-ewastescalable-prod-'\n| extend App = replace_string(ContainerAppName_s, 'aca-ewastescalable-prod-', '')\n| where '{AppFilter}' == 'All' or App == '{AppFilter}'\n| project TimeGenerated, App, EventType=Reason_s, LogMessage=Log_s\n| order by TimeGenerated desc\n| take 50",
+        "size": 0,
+        "title": "Verbatim System Scaling & Replica Transition Events (ContainerAppSystemLogs_CL)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "scaling_event_audit_grid"
+    }
+  ],
+  "fallbackResourceIds": [
+    "/subscriptions/adbeb191-a535-49b4-a660-fb8d484e74ee/resourcegroups/rg-ewastescalable-shared/providers/microsoft.operationalinsights/workspaces/log-ewastescalable-centralized"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

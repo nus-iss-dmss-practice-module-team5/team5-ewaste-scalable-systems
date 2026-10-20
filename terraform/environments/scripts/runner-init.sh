@@ -11,7 +11,7 @@ echo "==========================================================================
 # 1. Update OS and install essential system tools
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg lsb-release jq git apt-transport-https
+apt-get install -y ca-certificates curl gnupg lsb-release jq git apt-transport-https cron
 
 # 2. Install Docker Engine
 install -m 0755 -d /etc/apt/keyrings
@@ -70,3 +70,13 @@ if [ -n "${GITHUB_PAT}" ]; then
 else
   echo "WARNING: GITHUB_PAT not supplied; runner unconfigured. Configure manually or supply PAT."
 fi
+
+# 7. Configure recurring Docker prune cron job to prevent disk exhaustion
+echo "Configuring recurring Docker prune cron job..."
+cat << 'CRON' > /etc/cron.d/docker-prune
+0 2 * * * root /usr/bin/docker system prune -af --filter "until=48h" >> /var/log/docker-prune.log 2>&1
+CRON
+chmod 0644 /etc/cron.d/docker-prune
+systemctl enable cron
+systemctl restart cron
+echo "Docker prune cron schedule active: daily at 02:00 AM (until=48h)"
