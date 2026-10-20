@@ -110,7 +110,7 @@ template {
    - KEDA polls active Envoy ingress metrics every 15–30 seconds.
    - When concurrent requests exceed the target threshold (`30`), KEDA computes:
 
-   $$\text{Target Replicas} = \min\left(\text{maxReplicas}, \left\lceil \frac{\text{Active Concurrent Requests}}{\text{Target Concurrency}} \right\rceil\right)$$
+     $$\text{Target Replicas} = \min\left(\text{maxReplicas}, \left\lceil \frac{\text{Active Concurrent Requests}}{\text{Target Concurrency}} \right\rceil\right)$$
 
    - Pod provisioning starts immediately in parallel.
 
