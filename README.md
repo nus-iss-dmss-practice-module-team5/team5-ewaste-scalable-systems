@@ -103,11 +103,13 @@ Each microservice is configured with dedicated KEDA autoscaling rules in Terrafo
 team5-ewaste-scalable-systems/
 ├── .github/
 │   └── workflows/              # 9 GitHub Actions CI/CD workflows & orchestration guide
-│       └── README.md           # Deep-dive workflow catalog and runbook
+│       └── README.md           # Deep-dive workflow catalog, trigger matrix & UI guide
 ├── contracts/                  # Shared JSON schemas, event payloads & API specifications
 ├── database/
-│   ├── changelog/              # Liquibase XML database changeSets (tables, indexes, constraints)
-│   └── liquibase.properties    # Liquibase runtime configuration
+│   ├── changelog-master.yaml   # Master Liquibase changelog orchestrating all changeSets
+│   ├── changes/                # Versioned DDL migration scripts (001-create-organisations.sql to 032)
+│   ├── seed/                   # Baseline seed data scripts (101-seed-organisations.sql to 108)
+│   └── tests/                  # Verification and migration test fixtures
 ├── docs/                       # Architectural documentation, runbooks, and evaluation evidence
 │   ├── archss-service-boundaries.md            # Service boundaries, table ownership & routes
 │   ├── CI_CD_AND_TESTING_RUNBOOK.md            # Testing strategy, gates & coverage
@@ -186,16 +188,18 @@ python -m matcher.main
 
 ## 7. Database Migrations & Schema Management
 
-Schema definitions are maintained as version-controlled, auditable Liquibase XML changelogs located in [`database/changelog/`](database/changelog/).
+Schema definitions are maintained as version-controlled, auditable Liquibase migrations orchestrated by [`database/changelog-master.yaml`](database/changelog-master.yaml), which includes individual DDL scripts in [`database/changes/`](database/changes/) and seed scripts in [`database/seed/`](database/seed/).
 
-- **Master Changelog:** `database/changelog/root.changelog.xml`
+- **Master Changelog:** [`database/changelog-master.yaml`](database/changelog-master.yaml)
+- **Migration Scripts:** `database/changes/001-create-organisations.sql` through `database/changes/032-create-registration-reviews.sql`
+- **Seed Scripts:** `database/seed/101-seed-organisations.sql` through `database/seed/108-seed-recycler-matching-config.sql`
 - **Zero-Downtime Rule:** All migrations must be backward-compatible (expand before contract).
 - **Execution via CI/CD:** Migrations run automatically through [`database-migration.yml`](.github/workflows/database-migration.yml) executed inside the Azure VNet before microservices are deployed.
 
 ```bash
 # Run migrations locally against local MySQL
 liquibase \
-  --changeLogFile=database/changelog/root.changelog.xml \
+  --changelog-file=database/changelog-master.yaml \
   --url=jdbc:mysql://localhost:3306/ewaste_db \
   --username=root \
   --password=rootpassword \
@@ -206,23 +210,20 @@ liquibase \
 
 ## 8. Continuous Integration & Deployment (CI/CD)
 
-The repository includes 9 production-grade GitHub Actions workflows. Complete operational procedures, triggers, secrets reference, and rollback runbooks are documented in **[`.github/workflows/README.md`](.github/workflows/README.md)**.
+All CI/CD pipelines, automated branch protection gates, multi-environment deployments, and operational tools are managed through GitHub Actions.
 
-### Quick Workflow Dispatch Commands (GitHub CLI)
+> [!IMPORTANT]
+> **Complete Workflow Documentation & Triggering Guide:**
+> For detailed instructions on when workflows run automatically, how to trigger them manually from the GitHub Actions UI, parameter references, and self-hosted VNet runner specifications, please see the dedicated workflows guide:
+>
+> **👉 [`.github/workflows/README.md`](.github/workflows/README.md)**
 
-```powershell
-# Deploy infrastructure via Terraform to Production
-gh workflow run "IaC - Create Cloud Resources (Dev, Stg, Prod)" -f target_env=prod -f action=apply
-
-# Run Liquibase database migrations
-gh workflow run "Database - Liquibase Migration" -f target_env=prod
-
-# Deploy all microservices to Production
-gh workflow run "CD - Multi-Environment Deployment & Evidence Pipeline" -f target_env=prod -f services=all
-
-# Trigger immediate zero-downtime rollback to previous N-1 release
-gh workflow run "CD - Multi-Environment Deployment & Evidence Pipeline" -f target_env=prod -f rollback_tag=PREVIOUS
-```
+The dedicated workflows guide covers:
+- **Automated Trigger Rules:** Event cascades across `push`, `pull_request`, and `workflow_run` for Dev, Staging, and Production.
+- **Manual Triggering from GitHub UI:** Step-by-step instructions and input parameter definitions for each dispatchable workflow.
+- **VNet Runner Architecture:** Private Link deployment isolation via `vm-runner-ewastescalable-prod`.
+- **All 9 Workflows:** Detailed specifications for CI quality gates, Terraform IaC, Liquibase migrations, multi-service CD, and rollback procedures.
+- **Secrets & Variables:** Complete configuration reference matrix for Azure, Terraform, and application secrets.
 
 ---
 
@@ -245,7 +246,7 @@ All services stream structured JSON telemetry to a centralized **Azure Log Analy
 
 | Documentation Guide | Primary Topic |
 | :--- | :--- |
-| [**`.github/workflows/README.md`**](.github/workflows/README.md) | Complete guide to all 9 GitHub Actions workflows, triggers & secrets |
+| [**`.github/workflows/README.md`**](.github/workflows/README.md) | Complete guide to all 9 GitHub Actions workflows, triggers, UI steps & secrets |
 | [**`docs/SCALING_ARCHITECTURE_AND_RULES.md`**](docs/SCALING_ARCHITECTURE_AND_RULES.md) | KEDA scaling rules, timing matrices, KQL queries & live demo guide |
 | [**`docs/archss-service-boundaries.md`**](docs/archss-service-boundaries.md) | Service route ownership, database table ownership & Go entrypoints |
 | [**`docs/ROLLBACK_AND_DISASTER_RECOVERY_RUNBOOK.md`**](docs/ROLLBACK_AND_DISASTER_RECOVERY_RUNBOOK.md) | Automated zero-downtime rollbacks, disaster recovery & emergency runbooks |
