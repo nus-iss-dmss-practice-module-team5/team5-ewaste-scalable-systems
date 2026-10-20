@@ -35,6 +35,7 @@ type AssignmentView struct {
 	AssignmentSequence int64     `json:"assignment_sequence"`
 	Version            int64     `json:"version"`
 	BatchVersion       int64     `json:"batch_version,omitempty"`
+	AssignedAt         time.Time `json:"assigned_at"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
@@ -56,4 +57,14 @@ type AssignmentCurrentState struct {
 	BatchStatus         string  `json:"batch_status"`
 	BatchVersion        int64   `json:"batch_version"`
 	CurrentAssignmentID *string `json:"current_assignment_id,omitempty"`
+}
+
+// ValidationDetails names the field a 422 refused and, for a time, the
+// interval the server would accept, so a client can correct the value
+// instead of resending it.
+type ValidationDetails struct {
+	Field           string     `json:"field"`
+	Reason          string     `json:"reason"`
+	EarliestAllowed *time.Time `json:"earliest_allowed,omitempty"`
+	LatestAllowed   *time.Time `json:"latest_allowed,omitempty"`
 }

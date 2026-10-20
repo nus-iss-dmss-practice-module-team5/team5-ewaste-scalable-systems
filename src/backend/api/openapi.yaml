@@ -1569,6 +1569,7 @@ components:
         assignment_sequence: {type: integer, minimum: 1}
         version: {type: integer, minimum: 1}
         batch_version: {type: integer, minimum: 1, description: Current batch version on assignment reads. Use for If-Match-Version; version is the assignment version.}
+        assigned_at: {type: string, format: date-time, description: When this assignment was made. A handoff pickup_occurred_at must not be earlier.}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     AssignmentCurrentState:
@@ -1601,6 +1602,15 @@ components:
         page_size: {type: integer, minimum: 1}
         total_count: {type: integer, minimum: 0}
         correlation_id: {type: string}
+        server_time: {type: string, format: date-time, description: Server clock when the list was read. A handoff pickup_occurred_at must not be later than the server time at send.}
+    ValidationDetails:
+      type: object
+      required: [field, reason]
+      properties:
+        field: {type: string, description: Request field that was refused, e.g. pickup_occurred_at}
+        reason: {type: string, enum: [PICKUP_TIME_IN_FUTURE, PICKUP_TIME_BEFORE_ASSIGNMENT]}
+        earliest_allowed: {type: string, format: date-time, description: Earliest accepted value (the assignment's assigned_at), when known}
+        latest_allowed: {type: string, format: date-time, description: Server time that refused the value; the latest accepted value at that moment}
     RegisterRequest:
       type: object
       required: [email, password, display_name, role, organisation_name]
@@ -1652,6 +1662,10 @@ components:
           description: Authoritative snapshot returned for stale assignment commands. Review before resubmitting.
           allOf:
             - {$ref: '#/components/schemas/AssignmentCurrentState'}
+        details:
+          description: Field-level reason for a VALIDATION_ERROR, when the server can name the field and the accepted range.
+          allOf:
+            - {$ref: '#/components/schemas/ValidationDetails'}
         code: {type: string}
         message: {type: string}
         correlation_id: {type: string, maxLength: 128}
