@@ -110,11 +110,10 @@ template {
    - KEDA polls active Envoy ingress metrics every 15–30 seconds.
    - When concurrent requests exceed the target threshold (`30`), KEDA computes:
 
-     $$
-     \text{Target Replicas} = \min\left(\text{max\_replicas}, \left\lceil \frac{\text{Active Concurrent Requests}}{\text{Target Concurrency}} \right\rceil\right)
-     $$
+   $$\text{Target Replicas} = \min\left(\text{maxReplicas}, \left\lceil \frac{\text{Active Concurrent Requests}}{\text{Target Concurrency}} \right\rceil\right)$$
 
    - Pod provisioning starts immediately in parallel.
+
 2. **Scale-In Stabilization Window ($300\text{ seconds}$):**
    - In Azure Container Apps, active replica scale-in ($N \to 1$) is managed by the underlying **Kubernetes Horizontal Pod Autoscaler (HPA)**.
    - Microsoft **hardcodes the HPA scale-down stabilization window to 300 seconds (5 minutes)**.
